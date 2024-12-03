@@ -52,15 +52,41 @@ class BQ25798:
         self.set_charge_parameters(charge_voltage, charge_current)
         self.update_adc_readings()
 
-    def _read_register(self, reg_address):
-        """Read a 16-bit register value from the device."""
-        data = self.bus.read_word_data(self.address, reg_address)
-        return (data & 0xFF) << 8 | (data >> 8)
-
-    def _write_register(self, reg_address, value):
-        """Write a 16-bit value to a register."""
-        data = ((value & 0xFF) << 8) | (value >> 8)
-        self.bus.write_word_data(self.address, reg_address, data)
+    def _read_register(self, reg_address, reg_bits=16):
+        """
+        Read a register value from the device.
+    
+        Args:
+            reg_address (int): The register address to read from.
+            reg_bits (int): Number of bits in the register (8 or 16). Default is 16.
+        
+        Returns:
+            int: The value read from the register.
+        """
+        if reg_bits == 16:
+            data = self.bus.read_word_data(self.address, reg_address)
+            return (data & 0xFF) << 8 | (data >> 8)  # Swap byte order for 16-bit values
+        elif reg_bits == 8:
+            return self.bus.read_byte_data(self.address, reg_address)
+        else:
+            raise ValueError("Invalid reg_bits value. Only 8 or 16 are supported.")
+    
+    def _write_register(self, reg_address, value, reg_bits=16):
+        """
+        Write a value to a register.
+    
+        Args:
+            reg_address (int): The register address to write to.
+            value (int): The value to write.
+            reg_bits (int): Number of bits in the register (8 or 16). Default is 16.
+        """
+        if reg_bits == 16:
+            data = ((value & 0xFF) << 8) | (value >> 8)  # Swap byte order for 16-bit values
+            self.bus.write_word_data(self.address, reg_address, data)
+        elif reg_bits == 8:
+            self.bus.write_byte_data(self.address, reg_address, value)
+        else:
+            raise ValueError("Invalid reg_bits value. Only 8 or 16 are supported.")
 
     def enable_adc(self):
         """Enable the ADC."""
