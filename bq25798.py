@@ -2,23 +2,25 @@ import smbus2
 import time
 
 # Register Definitions
-REG_CHARGE_VOLTAGE = 0x04  # Charge Voltage Control Register
-REG_CHARGE_CURRENT = 0x02  # Charge Current Control Register
-REG_ADC_CTRL = 0x2C        # ADC Control Register
+REG_CHARGE_VOLTAGE = 0x04      # Charge Voltage Control Register
+REG_CHARGE_CURRENT = 0x02      # Charge Current Control Register
+REG_ADC_CTRL = 0x2C            # ADC Control Register
 REG_USB_SOURCE_VOLTAGE = 0x16  # USB-C Sourcing Voltage Register
 REG_USB_SOURCE_CURRENT = 0x18  # USB-C Sourcing Current Register
 REG_USB_SOURCE_CTRL = 0x19     # USB-C Source Control Register
 REG_OTG_CONFIG = 0x09          # OTG and Ship Mode Control Register
+REG_MPPT_CTRL = 0x1A           # MPPT Control Register
+REG_INPUT_SOURCE_CTRL = 0x1B   # Input Source Control Register
 
 # ADC Result Registers
-REG_ADC_IBUS = 0x34       # Input Current (IBUS) ADC Result
-REG_ADC_IBAT = 0x36       # Battery Charge/Discharge Current (IBAT) ADC Result
-REG_ADC_VBUS = 0x30       # Input Voltage (VBUS) ADC Result
-REG_ADC_VPMID = 0x38      # PMID Voltage ADC Result
-REG_ADC_VBAT = 0x32       # Battery Voltage (VBAT) ADC Result
-REG_ADC_VSYS = 0x3A       # System Voltage (VSYS) ADC Result
-REG_ADC_TS = 0x3C         # External Temperature Sensor (TS) ADC Result
-REG_ADC_TDIE = 0x3E       # Die Temperature (TDIE) ADC Result
+REG_ADC_IBUS = 0x34            # Input Current (IBUS) ADC Result
+REG_ADC_IBAT = 0x36            # Battery Charge/Discharge Current (IBAT) ADC Result
+REG_ADC_VBUS = 0x30            # Input Voltage (VBUS) ADC Result
+REG_ADC_VPMID = 0x38           # PMID Voltage ADC Result
+REG_ADC_VBAT = 0x32            # Battery Voltage (VBAT) ADC Result
+REG_ADC_VSYS = 0x3A            # System Voltage (VSYS) ADC Result
+REG_ADC_TS = 0x3C              # External Temperature Sensor (TS) ADC Result
+REG_ADC_TDIE = 0x3E            # Die Temperature (TDIE) ADC Result
 
 
 class BQ25798:
@@ -142,31 +144,81 @@ class BQ25798:
         self._write_register(REG_OTG_CONFIG, reg_value)
         print("Charging disabled.")
 
-    def enable_usb_sourcing(self, voltage_v=5.0, current_a=3.0):
+    def enable_mppt(self, port=2):
         """
-        Enable USB-C sourcing with specified voltage and current.
+        Enable MPPT (Maximum Power Point Tracking) for a specific port.
+
+        Args:
+            port (int): The port to enable MPPT for (1 or 2). Default is 2.
+        """
+        if port not in [1, 2]:
+            raise ValueError("Invalid port number. Must be 1 or 2.")
+
+        reg_value = self._read_register(REG_MPPT_CTRL)
+
+        # If MPPT is already enabled on a different port, disable it first
+        current_port = (reg_value >> 1) & 0x01
+        if current_port != (port - 1):
+            reg_value &= ~(1 << 1)  # Clear MPPT_PORT bit
+            reg_value &= ~(1 << 0)  # Disable MPPT
+            self._write_register(REG_MPPT_CTRL, reg_value)
+            print(f"MPPT disabled on port {current_port + 1}.")
+
+        # Enable MPPT for the selected port
+        reg_value |= (port - 1) << 1  # Set MPPT_PORT bit
+        reg_value |= (1 << 0)  # Enable MPPT
+        self._write_register(REG_MPPT_CTRL, reg_value)
+        print(f"MPPT enabled on port {port}.")
+
+    def disable_mppt(self):
+        """Disable MPPT (Maximum Power Point Tracking)."""
+        reg_value = self._read_register(REG_MPPT_CTRL)
+        reg_value &= ~(1 << 0)  # Clear MPPT_EN bit
+        self._write_register(REG_MPPT_CTRL, reg_value)
+        print("MPPT disabled.")
+
+    def enable_usb_sourcing(self, voltage_v=5.0, current_a=3.0, port=1):
+        """
+        Enable USB-C sourcing with specified voltage, current, and port.
 
         Args:
             voltage_v (float): Sourcing voltage in volts. Default is 5V.
             current_a (float): Sourcing current in amps. Default is 3A.
+            port (int): The port to enable sourcing on (1 or 2). Default is 1.
         """
+        if port not in [1, 2]:
+            raise ValueError("Invalid port number. Must be 1 or 2.")
+
+        reg_value = self._read_register(REG_USB_SOURCE_CTRL)
+
+        # If sourcing is already enabled on a different port, disable it first
+        current_port = (reg_value >> 1) & 0x01
+        if current_port != (port - 1):
+            reg_value &= ~(1 << 1)  # Clear SOURCE_PORT bit
+            reg_value &= ~(1 << 0)  # Disable sourcing
+            self._write_register(REG_USB_SOURCE_CTRL, reg_value)
+            print(f"USB sourcing disabled on port {current_port + 1}.")
+
+        # Set sourcing voltage and current
         voltage_mv = int(voltage_v * 1000)
         current_ma = int(current_a * 1000)
         voltage_reg = int(voltage_mv / 16)  # Voltage LSB is 16mV
         current_reg = int(current_ma / 50)  # Current LSB is 50mA
         self._write_register(REG_USB_SOURCE_VOLTAGE, voltage_reg)
         self._write_register(REG_USB_SOURCE_CURRENT, current_reg)
-        reg_value = self._read_register(REG_USB_SOURCE_CTRL)
-        reg_value |= (1 << 0)  # Enable sourcing bit
+
+        # Enable sourcing on the selected port
+        reg_value |= (port - 1) << 1  # Set SOURCE_PORT bit
+        reg_value |= (1 << 0)  # Enable sourcing
         self._write_register(REG_USB_SOURCE_CTRL, reg_value)
-        print(f"USB-C sourcing enabled: {voltage_v} V, {current_a} A.")
+        print(f"USB sourcing enabled: {voltage_v} V, {current_a} A on port {port}.")
 
     def disable_usb_sourcing(self):
-        """Disable USB-C power sourcing and return to adapter sink mode."""
+        """Disable USB-C power sourcing."""
         reg_value = self._read_register(REG_USB_SOURCE_CTRL)
-        reg_value &= ~(1 << 0)  # Clear sourcing enable bit
+        reg_value &= ~(1 << 0)  # Clear SOURCE_EN bit
         self._write_register(REG_USB_SOURCE_CTRL, reg_value)
-        print("USB-C sourcing disabled. Adapter sink mode re-enabled.")
+        print("USB-C sourcing disabled.")
 
     def enter_ship_mode(self, delay_enabled=False):
         """
