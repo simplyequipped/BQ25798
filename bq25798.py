@@ -1,26 +1,33 @@
+# Datasheet: https://www.ti.com/lit/ds/symlink/bq25798.pdf
+
 import smbus2
 import time
 
 # Register Definitions
-REG_CHARGE_VOLTAGE = 0x04      # Charge Voltage Control Register
-REG_CHARGE_CURRENT = 0x02      # Charge Current Control Register
-REG_ADC_CTRL = 0x2C            # ADC Control Register
+REG_CHARGE_VOLTAGE = 0x04  # Charge Voltage Control Register
+REG_CHARGE_CURRENT = 0x02  # Charge Current Control Register
+REG_PRECHARGE_CURRENT = 0x06  # Pre-Charge and Termination Current Control Register
+REG_ADC_CTRL = 0x2C        # ADC Control Register
 REG_USB_SOURCE_VOLTAGE = 0x16  # USB-C Sourcing Voltage Register
 REG_USB_SOURCE_CURRENT = 0x18  # USB-C Sourcing Current Register
 REG_USB_SOURCE_CTRL = 0x19     # USB-C Source Control Register
 REG_OTG_CONFIG = 0x09          # OTG and Ship Mode Control Register
 REG_MPPT_CTRL = 0x1A           # MPPT Control Register
 REG_INPUT_SOURCE_CTRL = 0x1B   # Input Source Control Register
+REG_MIN_SYS_VOLTAGE = 0x0E     # Minimum System Voltage Control Register
+REG_TIMER_CONTROL = 0x12       # Safety Timer and Watchdog Control Register
+REG_FAULT_STATUS = 0x20        # Fault Status Register
+REG_PROTECTION_CTRL = 0x1C     # Protection Control Register
 
 # ADC Result Registers
-REG_ADC_IBUS = 0x34            # Input Current (IBUS) ADC Result
-REG_ADC_IBAT = 0x36            # Battery Charge/Discharge Current (IBAT) ADC Result
-REG_ADC_VBUS = 0x30            # Input Voltage (VBUS) ADC Result
-REG_ADC_VPMID = 0x38           # PMID Voltage ADC Result
-REG_ADC_VBAT = 0x32            # Battery Voltage (VBAT) ADC Result
-REG_ADC_VSYS = 0x3A            # System Voltage (VSYS) ADC Result
-REG_ADC_TS = 0x3C              # External Temperature Sensor (TS) ADC Result
-REG_ADC_TDIE = 0x3E            # Die Temperature (TDIE) ADC Result
+REG_ADC_IBUS = 0x34       # Input Current (IBUS) ADC Result
+REG_ADC_IBAT = 0x36       # Battery Charge/Discharge Current (IBAT) ADC Result
+REG_ADC_VBUS = 0x30       # Input Voltage (VBUS) ADC Result
+REG_ADC_VPMID = 0x38      # PMID Voltage ADC Result
+REG_ADC_VBAT = 0x32       # Battery Voltage (VBAT) ADC Result
+REG_ADC_VSYS = 0x3A       # System Voltage (VSYS) ADC Result
+REG_ADC_TS = 0x3C         # External Temperature Sensor (TS) ADC Result
+REG_ADC_TDIE = 0x3E       # Die Temperature (TDIE) ADC Result
 
 
 class BQ25798:
@@ -47,129 +54,71 @@ class BQ25798:
         self.ts = 0.0  # External temperature sensor (°C)
         self.tdie = 0.0  # Die temperature (°C)
 
-        # Configure ADC to one-shot mode and update readings
+        # Configure ADC and charging parameters
         self.set_adc_one_shot_mode()
         self.set_charge_parameters(charge_voltage, charge_current)
         self.update_adc_readings()
 
     def _read_register(self, reg_address, reg_bits=16):
-        """
-        Read a register value from the device.
-    
-        Args:
-            reg_address (int): The register address to read from.
-            reg_bits (int): Number of bits in the register (8 or 16). Default is 16.
-        
-        Returns:
-            int: The value read from the register.
-        """
+        """Read a register value (8-bit or 16-bit)."""
         if reg_bits == 16:
             data = self.bus.read_word_data(self.address, reg_address)
-            return (data & 0xFF) << 8 | (data >> 8)  # Swap byte order for 16-bit values
+            return (data & 0xFF) << 8 | (data >> 8)  # Swap byte order
         elif reg_bits == 8:
             return self.bus.read_byte_data(self.address, reg_address)
         else:
             raise ValueError("Invalid reg_bits value. Only 8 or 16 are supported.")
-    
+
     def _write_register(self, reg_address, value, reg_bits=16):
-        """
-        Write a value to a register.
-    
-        Args:
-            reg_address (int): The register address to write to.
-            value (int): The value to write.
-            reg_bits (int): Number of bits in the register (8 or 16). Default is 16.
-        """
+        """Write a register value (8-bit or 16-bit)."""
         if reg_bits == 16:
-            data = ((value & 0xFF) << 8) | (value >> 8)  # Swap byte order for 16-bit values
+            data = ((value & 0xFF) << 8) | (value >> 8)  # Swap byte order
             self.bus.write_word_data(self.address, reg_address, data)
         elif reg_bits == 8:
             self.bus.write_byte_data(self.address, reg_address, value)
         else:
             raise ValueError("Invalid reg_bits value. Only 8 or 16 are supported.")
 
+    ### ADC Functions ###
+    def set_adc_one_shot_mode(self):
+        """Set the ADC to one-shot mode for minimal quiescent current."""
+        reg_value = self._read_register(REG_ADC_CTRL)
+        reg_value |= (1 << 1)  # Set ADC_ONE_SHOT bit
+        self._write_register(REG_ADC_CTRL, reg_value)
+        print("ADC set to one-shot mode.")
+
     def enable_adc(self):
         """Enable the ADC."""
         reg_value = self._read_register(REG_ADC_CTRL)
-        reg_value |= (1 << 0)  # Set ADC_EN bit to enable ADC
+        reg_value |= (1 << 0)  # Enable ADC
         self._write_register(REG_ADC_CTRL, reg_value)
         print("ADC enabled.")
 
     def disable_adc(self):
         """Disable the ADC."""
         reg_value = self._read_register(REG_ADC_CTRL)
-        reg_value &= ~(1 << 0)  # Clear ADC_EN bit to disable ADC
+        reg_value &= ~(1 << 0)  # Disable ADC
         self._write_register(REG_ADC_CTRL, reg_value)
         print("ADC disabled.")
 
-    def set_adc_one_shot_mode(self):
-        """Set the ADC to one-shot mode for minimal quiescent current."""
-        reg_value = self._read_register(REG_ADC_CTRL)
-        reg_value |= (1 << 1)  # Set ADC_ONE_SHOT bit to enable one-shot mode
-        self._write_register(REG_ADC_CTRL, reg_value)
-        print("ADC configured to one-shot mode.")
-
-    def request_adc_update(self):
-        """Manually request ADC updates for all measured values."""
-        reg_value = self._read_register(REG_ADC_CTRL)
-        reg_value |= (1 << 2)  # Set ADC_REQ bit to trigger an update
-        self._write_register(REG_ADC_CTRL, reg_value)
-        print("ADC update requested.")
-
     def update_adc_readings(self):
-        """
-        Read all ADC values from the device and update class variables with human-readable values.
-        """
-        # Enable ADC, request update, and read values
+        """Read all ADC values and update internal class variables."""
         self.enable_adc()
-        self.request_adc_update()
-        time.sleep(0.1)  # Small delay to allow ADC update to complete
+        time.sleep(0.1)  # Allow ADC to complete conversions
+        self.ibus = self._read_register(REG_ADC_IBUS) * 50 / 1000  # Convert to amps
+        self.ibat = self._read_register(REG_ADC_IBAT) * 64 / 1000  # Convert to amps
+        self.vbus = self._read_register(REG_ADC_VBUS) * 16 / 1000  # Convert to volts
+        self.vpmid = self._read_register(REG_ADC_VPMID) * 16 / 1000  # Convert to volts
+        self.vbat = self._read_register(REG_ADC_VBAT) * 16 / 1000  # Convert to volts
+        self.vsys = self._read_register(REG_ADC_VSYS) * 16 / 1000  # Convert to volts
+        self.ts = self._read_register(REG_ADC_TS) * 0.2  # Convert to °C
+        self.tdie = self._read_register(REG_ADC_TDIE) * 0.2  # Convert to °C
+        self.disable_adc()
+        print(f"Updated ADC readings: IBUS={self.ibus} A, IBAT={self.ibat} A, VBUS={self.vbus} V, "
+              f"VPMID={self.vpmid} V, VBAT={self.vbat} V, VSYS={self.vsys} V, "
+              f"TS={self.ts} °C, TDIE={self.tdie} °C.")
 
-        self.ibus = self._read_register(REG_ADC_IBUS) * 50 / 1000  # LSB = 50mA
-        self.ibat = self._read_register(REG_ADC_IBAT) * 64 / 1000  # LSB = 64mA
-        self.vbus = self._read_register(REG_ADC_VBUS) * 16 / 1000  # LSB = 16mV
-        self.vpmid = self._read_register(REG_ADC_VPMID) * 16 / 1000  # LSB = 16mV
-        self.vbat = self._read_register(REG_ADC_VBAT) * 16 / 1000  # LSB = 16mV
-        self.vsys = self._read_register(REG_ADC_VSYS) * 16 / 1000  # LSB = 16mV
-        self.ts = self._read_register(REG_ADC_TS) * 0.2  # LSB = 0.2°C
-        self.tdie = self._read_register(REG_ADC_TDIE) * 0.2  # LSB = 0.2°C
-
-        self.disable_adc()  # Disable ADC to minimize quiescent current
-
-        print(f"Updated ADC Readings: IBUS: {self.ibus} A, IBAT: {self.ibat} A, VBUS: {self.vbus} V, "
-              f"VPMID: {self.vpmid} V, VBAT: {self.vbat} V, VSYS: {self.vsys} V, "
-              f"TS: {self.ts} °C, TDIE: {self.tdie} °C.")
-
-    def set_charge_parameters(self, voltage_v, current_a):
-        """
-        Set the battery charging voltage and current.
-
-        Args:
-            voltage_v (float): Charging voltage in volts.
-            current_a (float): Charging current in amps.
-        """
-        voltage_mv = int(voltage_v * 1000)
-        current_ma = int(current_a * 1000)
-        voltage_reg = int(voltage_mv / 16)  # Voltage LSB is 16mV
-        current_reg = int(current_ma / 64)  # Current LSB is 64mA
-        self._write_register(REG_CHARGE_VOLTAGE, voltage_reg)
-        self._write_register(REG_CHARGE_CURRENT, current_reg)
-        print(f"Charging parameters set: {voltage_v} V, {current_a} A.")
-
-    def enable_charging(self):
-        """Enable battery charging."""
-        reg_value = self._read_register(REG_OTG_CONFIG)
-        reg_value |= (1 << 4)  # Set CHARGE_EN bit
-        self._write_register(REG_OTG_CONFIG, reg_value)
-        print("Charging enabled.")
-
-    def disable_charging(self):
-        """Disable battery charging."""
-        reg_value = self._read_register(REG_OTG_CONFIG)
-        reg_value &= ~(1 << 4)  # Clear CHARGE_EN bit
-        self._write_register(REG_OTG_CONFIG, reg_value)
-        print("Charging disabled.")
-
+    ### MPPT Functions ###
     def enable_mppt(self, port=2):
         """
         Enable MPPT (Maximum Power Point Tracking) for a specific port.
@@ -203,6 +152,32 @@ class BQ25798:
         self._write_register(REG_MPPT_CTRL, reg_value)
         print("MPPT disabled.")
 
+    ### Charging Functions ###
+    def set_charge_parameters(self, voltage_v, current_a):
+        """Set charging voltage and current."""
+        voltage_mv = int(voltage_v * 1000)
+        current_ma = int(current_a * 1000)
+        voltage_reg = voltage_mv // 16  # LSB = 16mV
+        current_reg = current_ma // 64  # LSB = 64mA
+        self._write_register(REG_CHARGE_VOLTAGE, voltage_reg)
+        self._write_register(REG_CHARGE_CURRENT, current_reg)
+        print(f"Charge parameters set: {voltage_v} V, {current_a} A.")
+
+    def enable_charging(self):
+        """Enable charging."""
+        reg_value = self._read_register(REG_PROTECTION_CTRL)
+        reg_value |= (1 << 0)  # Enable charging
+        self._write_register(REG_PROTECTION_CTRL, reg_value)
+        print("Charging enabled.")
+
+    def disable_charging(self):
+        """Disable charging."""
+        reg_value = self._read_register(REG_PROTECTION_CTRL)
+        reg_value &= ~(1 << 0)  # Disable charging
+        self._write_register(REG_PROTECTION_CTRL, reg_value)
+        print("Charging disabled.")
+
+    ### USB OTG (Source Mode) ###
     def enable_usb_sourcing(self, voltage_v=5.0, current_a=3.0, port=1):
         """
         Enable USB-C sourcing with specified voltage, current, and port.
@@ -273,8 +248,52 @@ class BQ25798:
         self._write_register(REG_OTG_CONFIG, reg_value)
         print("Exited ship mode.")
 
-    def close(self):
-        """Close the I²C bus."""
-        self.bus.close()
-        print("I²C bus closed.")
+    def enter_shutdown_mode(self):
+        """Enter shutdown mode."""
+        reg_value = self._read_register(REG_PROTECTION_CTRL)
+        reg_value |= (1 << 7)  # Enable shutdown mode
+        self._write_register(REG_PROTECTION_CTRL, reg_value)
+        print("Shutdown mode enabled.")
+
+    ### Fault Monitoring ###
+    def get_fault_status(self):
+        """Retrieve fault status."""
+        fault_reg = self._read_register(REG_FAULT_STATUS)
+        faults = {
+            "OVP": bool(fault_reg & (1 << 7)),  # Over-voltage protection fault
+            "OCP": bool(fault_reg & (1 << 6)),  # Over-current protection fault
+            "OTP": bool(fault_reg & (1 << 5)),  # Over-temperature protection fault
+        }
+        print(f"Fault status: {faults}")
+        return faults
+
+    ### Safety Timers ###
+    def configure_safety_timers(self, precharge_timeout=30, fast_charge_timeout=180):
+        """
+        Configure precharge and fast charge safety timers.
+
+        Args:
+            precharge_timeout (int): Precharge timeout in minutes.
+            fast_charge_timeout (int): Fast charge timeout in minutes.
+        """
+        precharge_val = min(max(precharge_timeout, 0), 60) // 10
+        fastcharge_val = min(max(fast_charge_timeout, 0), 320) // 40
+        timer_reg = (fastcharge_val << 4) | precharge_val
+        self._write_register(REG_TIMER_CONTROL, timer_reg, reg_bits=8)
+        print(f"Safety timers set: Precharge={precharge_timeout} min, Fast Charge={fast_charge_timeout} min.")
+
+    ### Adapter and Input Management ###
+    def set_input_current_limit(self, current_a):
+        """Set input current limit."""
+        current_ma = int(current_a * 1000)
+        input_limit_reg = current_ma // 50  # LSB = 50mA
+        self._write_register(REG_INPUT_SOURCE_CTRL, input_limit_reg, reg_bits=8)
+        print(f"Input current limit set to {current_a} A.")
+
+    def set_minimum_system_voltage(self, voltage_v):
+        """Set minimum system voltage."""
+        voltage_mv = int(voltage_v * 1000)
+        min_sys_reg = voltage_mv // 16  # LSB = 16mV
+        self._write_register(REG_MIN_SYS_VOLTAGE, min_sys_reg)
+        print(f"Minimum system voltage set to {voltage_v} V.")
     
