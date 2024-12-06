@@ -8,34 +8,34 @@ from logging.handlers import RotatingFileHandler
 import smbus2
 
 # register definitions
-REG_CHARGE_VOLTAGE = 0x04  # Charge Voltage Control Register
-REG_CHARGE_CURRENT = 0x02  # Charge Current Control Register
-REG_PRECHARGE_CURRENT = 0x06  # Pre-Charge and Termination Current Control Register
-REG_ADC_CTRL = 0x2C        # ADC Control Register
-REG_USB_SOURCE_VOLTAGE = 0x16  # USB-C Sourcing Voltage Register
-REG_USB_SOURCE_CURRENT = 0x18  # USB-C Sourcing Current Register
-REG_USB_SOURCE_CTRL = 0x19     # USB-C Source Control Register
-REG_OTG_CONFIG = 0x09          # OTG and Ship Mode Control Register
-REG_MPPT_CTRL = 0x1A           # MPPT Control Register
-REG_INPUT_SOURCE_CTRL = 0x1B   # Input Source Control Register
-REG_MIN_SYS_VOLTAGE = 0x0E     # Minimum System Voltage Control Register
-REG_TIMER_CONTROL = 0x12       # Safety Timer and Watchdog Control Register
-REG_FAULT_STATUS = 0x20        # Fault Status Register
-REG_PROTECTION_CTRL = 0x1C     # Protection Control Register
+REG_CHARGE_VOLTAGE = 0x04      # charge voltage control register
+REG_CHARGE_CURRENT = 0x02      # charge current control register
+REG_PRECHARGE_CURRENT = 0x06   # pre-charge and termination current control register
+REG_ADC_CTRL = 0x2C            # ADC control register
+REG_USB_SOURCE_VOLTAGE = 0x16  # USB-C sourcing voltage register
+REG_USB_SOURCE_CURRENT = 0x18  # USB-C sourcing current register
+REG_USB_SOURCE_CTRL = 0x19     # USB-C source control register
+REG_OTG_CONFIG = 0x09          # OTG and ship mode control register
+REG_MPPT_CTRL = 0x1A           # mppt control register
+REG_INPUT_SOURCE_CTRL = 0x1B   # input source control register
+REG_MIN_SYS_VOLTAGE = 0x0E     # minimum system voltage control register
+REG_TIMER_CONTROL = 0x12       # safety timer and watchdog control register
+REG_FAULT_STATUS = 0x20        # fault status register
+REG_PROTECTION_CTRL = 0x1C     # protection control register
 
-REG_ADC_IBUS = 0x34       # Input Current (IBUS) ADC Result
-REG_ADC_IBAT = 0x36       # Battery Charge/Discharge Current (IBAT) ADC Result
-REG_ADC_VBUS = 0x30       # Input Voltage (VBUS) ADC Result
-REG_ADC_VPMID = 0x38      # PMID Voltage ADC Result
-REG_ADC_VBAT = 0x32       # Battery Voltage (VBAT) ADC Result
-REG_ADC_VSYS = 0x3A       # System Voltage (VSYS) ADC Result
-REG_ADC_TS = 0x3C         # External Temperature Sensor (TS) ADC Result
-REG_ADC_TDIE = 0x3E       # Die Temperature (TDIE) ADC Result
+REG_ADC_IBUS = 0x34            # input current ADC result register
+REG_ADC_IBAT = 0x36            # battery charge/discharge current ADC result register
+REG_ADC_VBUS = 0x30            # input voltage ADC result register
+REG_ADC_VPMID = 0x38           # PMID voltage ADC result register
+REG_ADC_VBAT = 0x32            # battery voltage ADC result register
+REG_ADC_VSYS = 0x3A            # system voltage ADC result register
+REG_ADC_TS = 0x3C              # external temperature sensor ADC result register
+REG_ADC_TDIE = 0x3E            # die temperature ADC result register
 
-
+# configure logging
 logger = logging.getLogger('bq25798_log')
 logger.setLevel(logging.DEBUG)
-# Create a rotating file handler (max size: 1MB, keep 3 backups)
+# max size: 1MB, keep 3 backups
 handler = RotatingFileHandler('bq25798.log', maxBytes=1_000_000, backupCount=3)
 handler.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -51,10 +51,47 @@ class BQ25798:
 
     BAT_CHEMISTRY = [CHEMISTRY_LIFEPO4, CHEMISTRY_LI_ION, CHEMISTRY_NIMH]
 
-    MIN_CELL_VOLTAGES = {
-        BAT_CHEMISTRY_LIFEPO4 : 2.5,
-        BAT_CHEMISTRY_LI_ION  : 3.0,
-        BAT_CHEMISTRY_NIMH    : 1.0
+    # state-of-charge (SoC) curve reference points
+    BAT_SOC_CURVE = {
+        BAT_CHEMISTRY_LIFEPO4 : [
+            (2.5, 0),
+            (2.8, 10),
+            (3.0, 20),
+            (3.2, 30),
+            (3.25, 40),
+            (3.3, 50),
+            (3.35, 60),
+            (3.4, 70),
+            (3.45, 80),
+            (3.5, 90),
+            (3.6, 100)
+        ],
+        BAT_CHEMISTRY_LI_ION : [
+            (3.0, 0),
+            (3.2, 10),
+            (3.4, 20),
+            (3.6, 30),
+            (3.7, 40),
+            (3.8, 50),
+            (3.9, 60),
+            (4.0, 70),
+            (4.1, 80),
+            (4.15, 90),
+            (4.2, 100)
+        ],
+        BAT_CHEMISTRY_NIMH : [
+            (1.0, 0),
+            (1.1, 10),
+            (1.15, 20),
+            (1.2, 30),
+            (1.25, 40),
+            (1.3, 50),
+            (1.35, 60),
+            (1.4, 70),
+            (1.45, 80),
+            (1.5, 90),
+            (1.55, 100)
+        ] 
     }
 
     # battery states
@@ -70,7 +107,7 @@ class BQ25798:
 
     ADC_MODES = [ADC_MODE_ONE_SHOT, ADC_MODE_CONTINUOUS]
 
-    def __init__(self, i2c_bus=1, i2c_address=0x6B, charge_voltage, charge_current, bat_series_cells, bat_chemistry, bat_capacity_ah, bat_min_cell_voltage=None):
+    def __init__(self, i2c_bus=1, i2c_address=0x6B, charge_voltage, charge_current, bat_series_cells, bat_chemistry, bat_capacity_ah):
         '''
         Initialize the BQ25798 module.
 
@@ -82,7 +119,6 @@ class BQ25798:
             bat_series_cells (int): Number of series battery cells (typically 1-4)
             bat_chemistry (str): Battery chemistry (LiFePo4, Li-ion, NiMH)
             bat_capacity_ah (float): Battery capacity in amp hours
-            bat_min_cell_voltage (float, optional): Battery minimum cell voltage, defaults to None
         '''
         self.bus = smbus2.SMBus(i2c_bus)
         self.address = i2c_address
@@ -93,16 +129,18 @@ class BQ25798:
         self.bat_capacity_ah = bat_capacity_ah
         
         if bat_chemistry in self.BAT_CHEMISTRY:
-            self.bat_chemisrty = bat_chemistry
+            self.bat_chemistry = bat_chemistry
         else:
-            raise ValueError('Usupported battery chemistry')
-
-        self.bat_min_cell_voltage = bat_min_cell_voltage or self.MIN_CELL_VOLTAGES[self.bat_chemistry]
-        self.bat_min_voltage = self.bat_min_cell_voltage * self.bat_series_cells
+            raise ValueError('Unsupported battery chemistry')
 
         self.adc_mode = None
         self.state = self.BAT_STATE_DISCHARGING
+        self.state_lock = threading.Lock()
+        self.adc_lock = threading.Lock()
+        self.fault_lock = threading.Lock()
+        
         self.state_change_callback = None
+        self.fault_callback = None
 
         # initialize ADC readings
         self.vbus = 0.0  # input voltage (volts)
@@ -135,24 +173,39 @@ class BQ25798:
             time.sleep(self.async_update_seconds)
 
             # update adc readings
-            self.update_adc_readings()
+            with self.adc_lock:
+                self.update_adc_readings()
 
             # update state
             previous_state = self.state
 
-            if self.charging()
-                if self.battery_percentage() < 100:
-                    self.state = self.BAT_STATE_CHARGING
+            with self.state_lock:
+                if self.charging()
+                    if self.battery_percentage() < 100:
+                        self.state = self.BAT_STATE_CHARGING
+                    else:
+                        self.state = self.BAT_STATE_CHARGED
                 else:
-                    self.state = self.BAT_STATE_CHARGED
-            else:
-                self.state = self.BAT_STATE_DISCHARGING
+                    self.state = self.BAT_STATE_DISCHARGING
 
             if self.state != previous_state
                 logging.info(f'State change: {self.state}')
 
+                # state change callback
                 if self.state_change_callback is not None:
                     self.state_change_callback(self.state)
+
+            # update fault status
+            with self.fault_lock:
+                faults = self.get_fault_status()
+
+            for fault, status in faults.items():
+                if status == True:
+                    logging.info(f'Fault: {fault}')
+
+                    # fault callback
+                    if self.fault_callback is not None:
+                        self.fault_callback(fault)
         
     def _read_register(self, reg_address, reg_bits=16):
         '''Read register value
@@ -220,10 +273,7 @@ class BQ25798:
             bool: True if ADC is enabled, False otherwise
         '''
         reg_value = self._read_register(REG_ADC_CTRL, reg_bits=8)
-        if reg_value & (1 << 0):  # check if ADC_EN bit is set
-            return True
-        else:
-            return False
+        return bool(reg_value & (1 << 0))  # check if ADC_EN bit is set
         
     def set_adc_one_shot_mode(self):
         '''Set ADC to one-shot mode for minimal quiescent current'''
@@ -386,8 +436,39 @@ class BQ25798:
         return bool(self.charging_enabled() and self.ibat > 0)
 
     def battery_percentage(self):
-        # estimate battery percentage based on voltage (minimum 0%, maximum 100%)
-        return max(0, min(100, ((self.vbat - self.bat_min_voltage) / (self.charge_voltage - self.bat_min_voltage)) * 100))
+        '''
+        Estimate battery percentage based on voltage and battery chemistry.
+    
+        Returns:
+            float: Estimated battery percentage (0-100%)
+        '''
+        # per-cell voltage
+        cell_voltage = self.vbat / self.num_cells
+    
+        # soc curve points based on battery chemistry
+        if self.bat_chemistry == self.BAT_CHEMISTRY_LIFEPO4:
+            soc_points = self.BAT_SOC_CURVE[self.BAT_CHEMISTRY_LIFEPO4]
+        elif self.bat_chemistry == self.BAT_CHEMISTRY_LI_ION:
+            soc_points = self.BAT_SOC_CURVE[self.BAT_CHEMISTRY_LI_ION]
+        elif self.bat_chemistry == self.BAT_CHEMISTRY_NIMH:
+            soc_points = self.BAT_SOC_CURVE[self.BAT_CHEMISTRY_NIMH]
+        else:
+            raise ValueError('Unsupported battery chemistry')
+    
+        # find two soc points for interpolation
+        for i in range(len(soc_points) - 1):
+            v1, p1 = soc_points[i]
+            v2, p2 = soc_points[i + 1]
+            if v1 <= cell_voltage <= v2:
+                # linear interpolation between v1 and v2
+                percentage = p1 + (cell_voltage - v1) * (p2 - p1) / (v2 - v1)
+                return max(0, min(100, percentage))  # clamp to [0, 100]
+    
+        # if voltage out of range, clamp to 0% or 100%
+        if cell_voltage < soc_points[0][0]:
+            return 0
+        if cell_voltage > soc_points[-1][0]:
+            return 100
 
     def battery_charge_stage(self):
         # determine charging stage based on battery voltage
@@ -533,7 +614,6 @@ class BQ25798:
     
     ### Fault Status ###
     #TODO detail fault status dict in doc string
-    #TODO should these be monitored in a loop with a fault callback?
     def get_fault_status(self):
         '''
         Retrieve fault status.
