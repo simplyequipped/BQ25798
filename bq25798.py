@@ -7,7 +7,7 @@ from logging.handlers import RotatingFileHandler
 
 import smbus2
 
-# Register Definitions
+# register definitions
 REG_CHARGE_VOLTAGE = 0x04  # Charge Voltage Control Register
 REG_CHARGE_CURRENT = 0x02  # Charge Current Control Register
 REG_PRECHARGE_CURRENT = 0x06  # Pre-Charge and Termination Current Control Register
@@ -23,7 +23,6 @@ REG_TIMER_CONTROL = 0x12       # Safety Timer and Watchdog Control Register
 REG_FAULT_STATUS = 0x20        # Fault Status Register
 REG_PROTECTION_CTRL = 0x1C     # Protection Control Register
 
-# ADC Result Registers
 REG_ADC_IBUS = 0x34       # Input Current (IBUS) ADC Result
 REG_ADC_IBAT = 0x36       # Battery Charge/Discharge Current (IBAT) ADC Result
 REG_ADC_VBUS = 0x30       # Input Voltage (VBUS) ADC Result
@@ -34,41 +33,76 @@ REG_ADC_TS = 0x3C         # External Temperature Sensor (TS) ADC Result
 REG_ADC_TDIE = 0x3E       # Die Temperature (TDIE) ADC Result
 
 
-# Create a logger
 logger = logging.getLogger('bq25798_log')
 logger.setLevel(logging.DEBUG)
 # Create a rotating file handler (max size: 1MB, keep 3 backups)
 handler = RotatingFileHandler('bq25798.log', maxBytes=1_000_000, backupCount=3)
 handler.setLevel(logging.DEBUG)
-# Add formatter
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
-# Add the handler to the logger
 logger.addHandler(handler)
-
-#TODO Log messages
-#logging.debug('This is a debug message')
-#logging.info('This is an info message')
-#logging.warning('This is a warning message')
-#logging.error('This is an error message')
-#logging.critical('This is a critical message')
-
 
 
 class BQ25798:
-    def __init__(self, i2c_bus=1, i2c_address=0x6B, charge_voltage=14.2, charge_current=3.0, adc_update_seconds=3):
+    # battery chemistry
+    BAT_CHEMISTRY_LIFEPO4 = 'LiFePo4'
+    BAT_CHEMISTRY_LI_ION  = 'Li-ion'
+    BAT_CHEMISTRY_NIMH    = 'NiMH'
+
+    BAT_CHEMISTRY = [CHEMISTRY_LIFEPO4, CHEMISTRY_LI_ION, CHEMISTRY_NIMH]
+
+    MIN_CELL_VOLTAGES = {
+        BAT_CHEMISTRY_LIFEPO4 : 2.5,
+        BAT_CHEMISTRY_LI_ION  : 3.0,
+        BAT_CHEMISTRY_NIMH    : 1.0
+    }
+
+    # battery states
+    BAT_STATE_DISCHARGING = 'discharging'
+    BAT_STATE_CHARGING    = 'charging'
+    BAT_STATE_CHARGED     = 'charged'
+
+    BAT_STATES = [BAT_STATE_DISCHARGING, BAT_STATE_CHARGING, BAT_STATE_CHARGED]
+
+    # adc modes
+    ADC_MODE_ONE_SHOT     = 'one-shot'
+    ADC_MODE_CONTINUOUS   = 'continuous'
+
+    ADC_MODES = [ADC_MODE_ONE_SHOT, ADC_MODE_CONTINUOUS]
+
+    def __init__(self, i2c_bus=1, i2c_address=0x6B, charge_voltage, charge_current, bat_series_cells, bat_chemistry, bat_capacity_ah, bat_min_cell_voltage=None):
         '''
         Initialize the BQ25798 module.
 
         Args:
             i2c_bus (int): I2C bus number, defaults to 1
             i2c_address (int): I2C address of the BQ25798, defaults 0x6B
-            charge_voltage (float): Battery charge voltage in volts, defaults to 14.2
-            charge_current (float): Battery charge current in amps, defaults to 3.0
-            adc_update_seconds (int): How often to update ADC readings, defaults to 3
+            charge_voltage (float): Battery charge voltage in volts
+            charge_current (float): Battery charge current in amps
+            bat_series_cells (int): Number of series battery cells (typically 1-4)
+            bat_chemistry (str): Battery chemistry (LiFePo4, Li-ion, NiMH)
+            bat_capacity_ah (float): Battery capacity in amp hours
+            bat_min_cell_voltage (float, optional): Battery minimum cell voltage, defaults to None
         '''
         self.bus = smbus2.SMBus(i2c_bus)
         self.address = i2c_address
+        self.charge_voltage = None
+        self.charge_current = None
+        self.async_update_seconds = 3
+        self.bat_series_cells = bat_series_cells
+        self.bat_capacity_ah = bat_capacity_ah
+        
+        if bat_chemistry in self.BAT_CHEMISTRY:
+            self.bat_chemisrty = bat_chemistry
+        else:
+            raise ValueError('Usupported battery chemistry')
+
+        self.bat_min_cell_voltage = bat_min_cell_voltage or self.MIN_CELL_VOLTAGES[self.bat_chemistry]
+        self.bat_min_voltage = self.bat_min_cell_voltage * self.bat_series_cells
+
+        self.adc_mode = None
+        self.state = self.BAT_STATE_DISCHARGING
+        self.state_change_callback = None
 
         # initialize ADC readings
         self.vbus = 0.0  # input voltage (volts)
@@ -80,16 +114,46 @@ class BQ25798:
         self.ts = 0.0  # external temperature sensor (°C)
         self.tdie = 0.0  # die temperature (°C)
 
-        logging.info(f'BQ25798 initalized with I2C address {self.address}')
+        logging.info(f'BQ25798 initalized on I2C address {self.address}')
 
+        # initialize configuration
         self.set_charge_parameters(charge_voltage, charge_current)
         self.set_adc_one_shot_mode()
-        self.update_adc_readings()
-        # start thread to periodically update ADC values
-        #TODO should this happen in module or should application perform looping function?
-        adc_thread = threading.Thread(target=self._adc_loop, args=(adc_update,), daemon=True)
-        adc_thread.start()
+        self.disable_mppt()
 
+        # initalize adc readings
+        self.update_adc_readings()
+
+        # initialize state
+        # start async adc readings and charge state loop
+        job_thread = threading.Thread(target=self._job_loop, daemon=True)
+        job_thread.start()
+
+    def _job_loop(self):
+        # SMBus.fd is set to None after SMBus.close() is called
+        while self.bus.fd is not None:
+            time.sleep(self.async_update_seconds)
+
+            # update adc readings
+            self.update_adc_readings()
+
+            # update state
+            previous_state = self.state
+
+            if self.charging()
+                if self.battery_percentage() < 100:
+                    self.state = self.BAT_STATE_CHARGING
+                else:
+                    self.state = self.BAT_STATE_CHARGED
+            else:
+                self.state = self.BAT_STATE_DISCHARGING
+
+            if self.state != previous_state
+                logging.info(f'State change: {self.state}')
+
+                if self.state_change_callback is not None:
+                    self.state_change_callback(self.state)
+        
     def _read_register(self, reg_address, reg_bits=16):
         '''Read register value
 
@@ -153,16 +217,21 @@ class BQ25798:
         Check if ADC is enabled.
     
         Returns:
-            bool: True if the ADC is enabled (in either continuous or one-shot mode), False otherwise
+            bool: True if ADC is enabled, False otherwise
         '''
-        return self.get_adc_mode() in ('continuous', 'one-shot')
+        reg_value = self._read_register(REG_ADC_CTRL, reg_bits=8)
+        if reg_value & (1 << 0):  # check if ADC_EN bit is set
+            return True
+        else:
+            return False
         
     def set_adc_one_shot_mode(self):
         '''Set ADC to one-shot mode for minimal quiescent current'''
         reg_value = self._read_register(REG_ADC_CTRL)
         reg_value |= (1 << 1)  # Set ADC_ONE_SHOT bit
         self._write_register(REG_ADC_CTRL, reg_value)
-        logging.info('ADC set to one-shot mode')
+        self.adc_mode = self.ADC_MODE_ONE_SHOT
+        logging.info('ADC in one-shot mode')
 
     def set_adc_continuous_mode(self):
         '''Set the ADC to continuous mode.'''
@@ -170,28 +239,28 @@ class BQ25798:
         reg_value &= ~(1 << 1)  # clear the ADC_ONE_SHOT bit
         reg_value |= (1 << 0)  # set the ADC_EN bit
         self._write_register(REG_ADC_CTRL, reg_value, reg_bits=8)
-        logging.info('ADC set to continuous mode')
+        self.adc_mode = self.ADC_MODE_CONTINUOUS
+        logging.info('ADC in continuous mode')
 
     def get_adc_mode(self):
         '''
-        Get current ADC mode (continuous or one-shot).
+        Get current ADC mode.
     
         Returns:
-            str: 'continuous' if ADC is in continuous mode, 'one-shot' otherwise
+            str: 'one-shot' or 'continuious'
         '''
         reg_value = self._read_register(REG_ADC_CTRL, reg_bits=8)
-        if reg_value & (1 << 0):  # check if ADC_EN bit is set
-            if reg_value & (1 << 1):  # check if ADC_ONE_SHOT bit is set
-                return 'one-shot'
-            else:
-                return 'continuous'
+        if reg_value & (1 << 1):  # check if ADC_ONE_SHOT bit is set
+            return self.ADC_MODE_ONE_SHOT
         else:
-            return 'disabled'
+            return self.ADC_MODE_CONTINUOUS
 
     def update_adc_readings(self):
-        '''Read all ADC values and update class variables'''
-        self.enable_adc()
-        time.sleep(0.1)  # allow ADC to complete conversions
+        '''Update all local ADC values.'''
+        if self.adc_mode == self.ADC_MODE_ONE_SHOT:
+            self.enable_adc()
+            time.sleep(0.1)  # allow time for ADC to complete conversions
+
         self.ibus = self._read_register(REG_ADC_IBUS) * 50 / 1000  # convert to A, 50mA per bit scaling factor
         self.ibat = self._read_register(REG_ADC_IBAT) * 64 / 1000  # convert to A, 64mA per bit scaling factor
         self.vbus = self._read_register(REG_ADC_VBUS) * 16 / 1000  # convert to V, 16mV per bit scaling factor
@@ -200,21 +269,11 @@ class BQ25798:
         self.vsys = self._read_register(REG_ADC_VSYS) * 16 / 1000  # convert to V, 16mV per bit scaling factor
         self.ts = self._read_register(REG_ADC_TS) * 0.2  # convert to °C, 0.2°C per bit scaling factor
         self.tdie = self._read_register(REG_ADC_TDIE) * 0.2  # convert to °C, 0.2°C per bit scaling factor
-        self.disable_adc()
+
+        if self.adc_mode == self.ADC_MODE_ONE_SHOT:
+            self.disable_adc()
         
         logging.info(f'Updated ADC values: IBUS={self.ibus}A, IBAT={self.ibat}A, VBUS={self.vbus}V, VPMID={self.vpmid}V, VBAT={self.vbat}V, VSYS={self.vsys}V, TS={self.ts}°C, TDIE={self.tdie}°C')
-
-    def _adc_loop(self, seconds):
-        '''
-        Loop to periodically update ADC readings.
-
-        Args:
-            seconds (int): How often to update ADC readings
-        '''
-        # SMBus.fd is set to None after SMBus.close() is called
-        while self.bus.fd is not None:
-            time.sleep(seconds)
-            self.update_adc_readings()
 
     
     ### Solar MPPT Input ###
@@ -288,6 +347,9 @@ class BQ25798:
             voltage_v (float): Battery charge voltage in volts
             current_a (float): Battery charge current in amps
         '''
+        self.charge_voltage = voltage_v
+        self.charge_current = current_a
+
         voltage_mv = int(voltage_v * 1000)
         current_ma = int(current_a * 1000)
         voltage_reg = voltage_mv // 16  # LSB = 16mV
@@ -320,85 +382,36 @@ class BQ25798:
         reg_value = self._read_register(REG_PROTECTION_CTRL, reg_bits=8)
         return bool(reg_value & (1 << 0))  # check if the CHARGE_EN bit (bit 0) is set
 
-    def charge_status(self, battery_chemistry, num_cells, battery_capacity_ah, min_battery_voltage=None):
-        '''
-        Get the current charge status of the battery.
-    
-        Args:
-            battery_chemistry (str): Battery chemistry ('LiFePO4', 'Li-ion', 'NiMH')
-            num_cells (int): Number of battery cells in series
-            battery_capacity_ah (float): Battery capacity in amp-hours
-            min_battery_voltage (float, optional): Minimum voltage per cell, defaults for supported chemistries are used if not provided
-    
-        Returns:
-            dict: A dictionary containing charge status:
-                  - 'is_charging': True if the battery is being charged, False otherwise
-                  - 'configured_charge_voltage': Configured charge voltage in volts
-                  - 'configured_charge_current': Configured charge current in amps
-                  - 'actual_battery_voltage': Actual battery voltage in volts
-                  - 'actual_battery_current': Actual battery current in amps
-                  - 'charging_stage': Charging stage ('pre-charge', 'constant current', 'constant voltage', None if not charging)
-                  - 'battery_percentage': Estimated battery percentage (0-100%)
-                  - 'charge_time_remaining': Estimated time remaining to full charge in hours (None if not charging)
+    def battery_charging(self): 
+        return bool(self.charging_enabled() and self.ibat > 0)
 
-        Raises:
-            ValueError: Unsupported battery chemistry
-        '''
-        # default minimum voltages for supported chemistries
-        default_min_voltages = {
-            'LiFePO4': 2.5,
-            'Li-ion': 3.0,
-            'NiMH': 1.0
-        }
-    
-        # ensure battery chemistry is supported if minimum cell voltage not provided
-        if min_battery_voltage is None and battery_chemistry not in default_min_voltages:
-            raise ValueError('Unsupported battery chemistry')
-    
-        # determine minimum cell voltage and pack voltage
-        min_battery_voltage = min_battery_voltage or default_min_voltages[battery_chemistry]
-        total_min_voltage = min_battery_voltage * num_cells
-    
-        charge_voltage, charge_current = self.get_charge_parameters()
-        vbat = self.vbat
-        ibat = self.ibat
-    
-        # determine charging status
-        is_charging = self.charging_enabled() and ibat > 0
-    
+    def battery_percentage(self):
+        # estimate battery percentage based on voltage (minimum 0%, maximum 100%)
+        return max(0, min(100, ((self.vbat - self.bat_min_voltage) / (self.charge_voltage - self.bat_min_voltage)) * 100))
+
+    def battery_charge_stage(self):
         # determine charging stage based on battery voltage
-        charging_stage = None
-        if is_charging:
-            if vbat < charge_voltage * 0.7:
-                charging_stage = 'pre-charge'
-            elif vbat < charge_voltage * 0.95:
-                charging_stage = 'constant current'
+        stage = None
+
+        if self.battery_charging():
+            if self.vbat < self.charge_voltage * 0.7:
+                stage = 'pre-charge'
+            elif self.vbat < self.charge_voltage * 0.95:
+                stage = 'constant current'
             else: 
-                charging_stage = 'constant voltage'
-    
-        # estimate battery percentage based on voltage
-        # minimum 0%, maximum 100%
-        battery_percentage = max(
-            0, min(100, ((vbat - total_min_voltage) / (charge_voltage - total_min_voltage)) * 100)
-        )
-    
-        # calculate charge time remaining
-        if is_charging and battery_percentage < 100:
-            remaining_capacity_ah = (1 - (battery_percentage / 100)) * battery_capacity_ah
-            charge_time_remaining = remaining_capacity_ah / charge_current  # in hours
-        else:
-            charge_time_remaining = None
+                stage = 'constant voltage'
         
-        return {
-            'is_charging': is_charging,
-            'configured_charge_voltage': charge_voltage,
-            'configured_charge_current': charge_current,
-            'actual_battery_voltage': vbat,
-            'actual_battery_current': ibat,
-            'charging_stage': charging_stage,
-            'battery_percentage': battery_percentage,
-            'charge_time_remaining': charge_time_remaining
-        }
+        return stage
+
+    def battery_charge_time_remaining(self):
+        percent = self.battery_percentage()
+
+        # calculate charge time remaining
+        if self.battery_charging() and percent < 100:
+            remaining_capacity = ((1 - (percent / 100)) * self.bat_capacity_ah
+            return remaining_capacity / self.charge_current  # hours
+        else:
+            return 0
 
     
     ### USB Sourcing ###
