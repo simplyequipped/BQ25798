@@ -151,7 +151,7 @@ class BQ25798:
         self.fault_lock = threading.Lock()
         
         self.state_change_callback = None
-        self.fault_callback = None
+        self.fault_change_callback = None
 
         # initialize ADC readings
         self.vbus = 0.0  # input voltage (volts)
@@ -163,6 +163,16 @@ class BQ25798:
         self.ts = 0.0  # external temperature sensor (°C)
         self.tdie = 0.0  # die temperature (°C)
 
+        # initalize fault status
+        self.input_over_voltage_fault = False
+        self.input_under_voltage_fault = False
+        self.input_over_current_fault = False
+        self.battery_over_voltage_fault = False
+        self.battery_over_current_fault = False
+        self.temperature_sensor_fault = False
+        self.die_over_temperature_fault = False
+        self.charging_fault = False
+
         logging.info(f'BQ25798 initalized on I2C address {self.address}')
 
         # initialize configuration
@@ -170,8 +180,10 @@ class BQ25798:
         self.set_adc_one_shot_mode()
         self.disable_mppt()
 
-        # initalize adc readings
+        # initialize adc readings
         self.update_adc_readings()
+        # initialize fault status
+        self.update_fault_status()
 
         # initialize state
         # start async adc readings and charge state loop
@@ -208,15 +220,27 @@ class BQ25798:
 
             # update fault status
             with self.fault_lock:
-                faults = self.get_fault_status()
+                previous_faults = {
+                    'input_over_voltage_fault': self.input_over_voltage_fault,
+                    'input_under_voltage_fault': self.input_under_voltage_fault,
+                    'input_over_current_fault': self.input_over_current_fault,
+                    'battery_over_voltage_fault': self.battery_over_voltage_fault,
+                    'battery_over_current_fault': self.battery_over_current_fault,
+                    'temperature_sensor_fault': self.temperature_sensor_fault,
+                    'die_over_temperature_fault': self.die_over_temperature_fault,
+                    'charging_fault': self.charging_fault,
+                }
 
-            for fault, status in faults.items():
-                if status == True:
-                    logging.info(f'Fault: {fault}')
+                self.update_fault_status()
 
-                    # fault callback
-                    if self.fault_callback is not None:
-                        self.fault_callback(fault)
+                for fault, previous_status in previous_faults.items():
+                    current_status = getattr(self, fault)
+                    if previous_status != current_status:
+                        logging.info(f'Fault state change: {fault} {'active' if current_status else 'inactive'}')
+
+                # fault change callback
+                if self.fault_change_callback is not None:
+                    self.fault_change_callback(fault, current_status)
         
     def _read_register(self, reg_address, reg_bits=16):
         '''Read register value
@@ -622,29 +646,30 @@ class BQ25798:
 
     
     ### Fault Status ###
-    #TODO detail fault status dict in doc string
-    def get_fault_status(self):
+    def update_fault_status(self):
         '''
-        Retrieve fault status.
-    
-        Returns:
-            dict: Dictionary of all fault conditions and their states (True/False).
+        Update local fault status.
+
+        Updates the following class variables:
+            - input_over_voltage_fault
+            - input_under_voltage_fault
+            - input_over_current_fault
+            - battery_over_voltage_fault
+            - battery_over_current_fault
+            - temperature_sensor_fault
+            - die_over_temperature_fault
+            - charging_fault
         '''
         fault_reg = self._read_register(REG_FAULT_STATUS, reg_bits=8)
-    
-        faults = {
-            'INPUT_OVP': bool(fault_reg & (1 << 7)),   # input over-voltage protection fault
-            'INPUT_UVP': bool(fault_reg & (1 << 6)),   # input under-voltage protection fault
-            'INPUT_OCP': bool(fault_reg & (1 << 5)),   # input over-current protection fault
-            'BAT_OVP': bool(fault_reg & (1 << 4)),     # battery over-voltage protection fault
-            'BAT_OCP': bool(fault_reg & (1 << 3)),     # battery over-current protection fault
-            'TS_FAULT': bool(fault_reg & (1 << 2)),    # temperature sensor fault
-            'TDIE_FAULT': bool(fault_reg & (1 << 1)),  # die over-temperature protection fault
-            'CHRG_FAULT': bool(fault_reg & (1 << 0)),  # charging fault
-        }
-    
-        logging.info(f'Fault status: {faults}')
-        return faults
+
+        self.input_over_voltage_fault = bool(fault_reg & (1 << 7))
+        self.input_under_voltage_fault = bool(fault_reg & (1 << 6))
+        self.input_over_current_fault = bool(fault_reg & (1 << 5))
+        self.battery_over_voltage_fault = bool(fault_reg & (1 << 4))
+        self.battery_over_current_fault = bool(fault_reg & (1 << 3))
+        self.temperature_sensor_fault = bool(fault_reg & (1 << 2))
+        self.die_over_temperature_fault = bool(fault_reg & (1 << 1))
+        self.charging_fault = bool(fault_reg & (1 << 0))
 
     
     ### Safety Timers ###
