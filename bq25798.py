@@ -1,7 +1,7 @@
 # Datasheet: https://www.ti.com/lit/ds/symlink/bq25798.pdf
 #
 #TODO
-# - improve fault monitoring by storing previous fault state and checking for status change in job loop
+# - move reg constants into class obj
 # - improve docs
 
 
