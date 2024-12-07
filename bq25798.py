@@ -1,4 +1,9 @@
 # Datasheet: https://www.ti.com/lit/ds/symlink/bq25798.pdf
+#
+#TODO
+# - improve fault monitoring by storing previous fault state and checking for status change in job loop
+# - improve docs
+
 
 import time
 import threading
@@ -49,7 +54,7 @@ class BQ25798:
     BAT_CHEMISTRY_LI_ION  = 'Li-ion'
     BAT_CHEMISTRY_NIMH    = 'NiMH'
 
-    BAT_CHEMISTRY = [CHEMISTRY_LIFEPO4, CHEMISTRY_LI_ION, CHEMISTRY_NIMH]
+    BAT_CHEMISTRY = [BAT_CHEMISTRY_LIFEPO4, BAT_CHEMISTRY_LI_ION, BAT_CHEMISTRY_NIMH]
 
     # state-of-charge (SoC) curve reference points
     BAT_SOC_CURVE = {
@@ -132,6 +137,12 @@ class BQ25798:
             self.bat_chemistry = bat_chemistry
         else:
             raise ValueError('Unsupported battery chemistry')
+
+        # validate battery charging parameters
+        if not (0 < charge_voltage <= 18.8:
+            raise ValueError('Invalid charge voltage')
+        if not (0 < charge_current <= 5):
+    raise ValueError('Invalid charge current')
 
         self.adc_mode = None
         self.state = self.BAT_STATE_DISCHARGING
@@ -322,8 +333,6 @@ class BQ25798:
 
         if self.adc_mode == self.ADC_MODE_ONE_SHOT:
             self.disable_adc()
-        
-        logging.info(f'Updated ADC values: IBUS={self.ibus}A, IBAT={self.ibat}A, VBUS={self.vbus}V, VPMID={self.vpmid}V, VBAT={self.vbat}V, VSYS={self.vsys}V, TS={self.ts}°C, TDIE={self.tdie}°C')
 
     
     ### Solar MPPT Input ###
@@ -489,7 +498,7 @@ class BQ25798:
 
         # calculate charge time remaining
         if self.battery_charging() and percent < 100:
-            remaining_capacity = ((1 - (percent / 100)) * self.bat_capacity_ah
+            remaining_capacity = (1 - (percent / 100)) * self.bat_capacity_ah
             return remaining_capacity / self.charge_current  # hours
         else:
             return 0
