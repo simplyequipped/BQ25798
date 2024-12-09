@@ -5,6 +5,7 @@
 
 
 import time
+import atexit
 import threading
 import logging
 from logging.handlers import RotatingFileHandler
@@ -24,7 +25,7 @@ logger.addHandler(handler)
 
 
 class BQ25798:
-    # settings and control registers
+    # configuration and control registers
     REG_CHARGE_VOLTAGE = 0x04      # charge voltage control register
     REG_CHARGE_CURRENT = 0x02      # charge current control register
     REG_PRECHARGE_CURRENT = 0x06   # pre-charge and termination current control register
@@ -39,7 +40,7 @@ class BQ25798:
     REG_TIMER_CONTROL = 0x12       # safety timer and watchdog control register
     REG_FAULT_STATUS = 0x20        # fault status register
     REG_PROTECTION_CTRL = 0x1C     # protection control register
-    # ADC registers
+    # ADC reading registers
     REG_ADC_IBUS = 0x34            # input current ADC result register
     REG_ADC_IBAT = 0x36            # battery charge/discharge current ADC result register
     REG_ADC_VBUS = 0x30            # input voltage ADC result register
@@ -53,8 +54,7 @@ class BQ25798:
     BAT_CHEMISTRY_LIFEPO4 = 'LiFePo4'
     BAT_CHEMISTRY_LI_ION  = 'Li-ion'
     BAT_CHEMISTRY_NIMH    = 'NiMH'
-
-    BAT_CHEMISTRY = [BAT_CHEMISTRY_LIFEPO4, BAT_CHEMISTRY_LI_ION, BAT_CHEMISTRY_NIMH]
+    BAT_CHEMISTRIES = [BAT_CHEMISTRY_LIFEPO4, BAT_CHEMISTRY_LI_ION, BAT_CHEMISTRY_NIMH]
 
     # state-of-charge (SoC) curve reference points
     BAT_SOC_CURVE = {
@@ -98,23 +98,31 @@ class BQ25798:
             (1.55, 100)
         ] 
     }
+    '''State-of-charge (SoC) curve reference points for supported battery chemistries, used for estimating battery percentage.'''
 
     # battery states
     BAT_STATE_DISCHARGING = 'discharging'
     BAT_STATE_CHARGING    = 'charging'
     BAT_STATE_CHARGED     = 'charged'
-
     BAT_STATES = [BAT_STATE_DISCHARGING, BAT_STATE_CHARGING, BAT_STATE_CHARGED]
 
     # ADC modes
     ADC_MODE_ONE_SHOT     = 'one-shot'
     ADC_MODE_CONTINUOUS   = 'continuous'
-
     ADC_MODES = [ADC_MODE_ONE_SHOT, ADC_MODE_CONTINUOUS]
 
+    FAULT_INPUT_OVER_VOLTAGE  = 'input over-voltage fault'
+    FAULT_INPUT_UNDER_VOLTAGE = 'input under-voltage fault'
+    FAULT_INPUT_OVER_CURRENT  = 'input over-current fault'
+    FAULT_BAT_OVER_VOLTAGE    = 'battery over-voltage fault'
+    FAULT_BAT_OVER_CURRENT    = 'battery over-current fault'
+    FAULT_BAT_TEMP            = 'battery temperature fault'
+    FAULT_DIE_TEMP            = 'die temperature fault'
+    FAULT_CHARGING            = 'charging fault'
+    FAULTS = [FAULT_INPUT_OVER_VOLTAGE, FAULT_INPUT_UNDER_VOLTAGE, FAULT_INPUT_OVER_CURRENT, FAULT_BAT_OVER_VOLTAGE, FAULT_BAT_OVER_CURRENT, FAULT_BAT_TEMP, FAULT_DIE_TEMP, FAULT_CHARGING]
+
     def __init__(self, i2c_bus=1, i2c_address=0x6B, charge_voltage, charge_current, bat_series_cells, bat_chemistry, bat_capacity_ah):
-        '''
-        Initialize the BQ25798 module.
+        '''Initialize BQ25798 instance.
 
         Args:
             i2c_bus (int): I2C bus number, defaults to 1
@@ -124,36 +132,62 @@ class BQ25798:
             bat_series_cells (int): Number of series battery cells (typically 1-4)
             bat_chemistry (str): Battery chemistry (LiFePo4, Li-ion, NiMH)
             bat_capacity_ah (float): Battery capacity in amp hours
+
+        Returns:
+            bq25798.BQ25798 (obj): Initialized class instance
+
+        Raises:
+            ValueError: Unsupported battery chemistry
+            ValueError: Invalid charge voltage
+            ValueError: Invalid charge current
         '''
         self.bus = smbus2.SMBus(i2c_bus)
+        '''I2C bus instance object'''
         self.address = i2c_address
+        '''I2C address'''
         self.charge_voltage = None
+        '''Battery charge voltage'''
         self.charge_current = None
+        '''Battery charge current'''
         self.async_update_seconds = 3
+        '''How often to update local variables assocaited with ADC readings, state, and fault status'''
         self.bat_series_cells = bat_series_cells
+        '''Number of battery series cells (ex 13.8V 4S battery = 4), used for calculating battery percentage'''
         self.bat_capacity_ah = bat_capacity_ah
+        '''Battery capacity in amp hours, used for calculating battery percentage'''
+        self.bat_chemistry = bat_chemistry
+        '''Battery chemistry (see BQ25798.BAT_CHEMISTRY_* constants), used for calculating battery percentage'''
         
-        if bat_chemistry in self.BAT_CHEMISTRY:
-            self.bat_chemistry = bat_chemistry
-        else:
+        # close I2C bus at exit
+        atexit.register(self.close())
+
+        # validate battery chemistry
+        if self.bat_chemistry not in self.BAT_CHEMISTRIES:
             raise ValueError('Unsupported battery chemistry')
 
         # validate battery charging parameters
         if not (0 < charge_voltage <= 18.8:
             raise ValueError('Invalid charge voltage')
         if not (0 < charge_current <= 5):
-    raise ValueError('Invalid charge current')
+            raise ValueError('Invalid charge current')
 
-        self.adc_mode = None
+        self.adc_mode = ADC_MODE_ONE_SHOT
+        '''ADC operating mode (see BQ25798.ADC_MODE_* constants)'''
         self.state = self.BAT_STATE_DISCHARGING
-        self.state_lock = threading.Lock()
-        self.adc_lock = threading.Lock()
-        self.fault_lock = threading.Lock()
+        '''Battery state (see BQ25798.BAT_STATE_* constants)'''
+        
+        self._state_lock = threading.Lock()
+        self._adc_lock = threading.Lock()
+        self._fault_lock = threading.Lock()
         
         self.state_change_callback = None
+        '''Battery state change callback function, defaults to None
+        - Callback signature: *func(state)* where *state* is a BQ25798.BAT_STATE_* constant'''
         self.fault_change_callback = None
+        '''BQ25798 fault status change callback function, defaults to None
+        - Callback signature: *func(fault, status)* where *fault* is a BQ25798.BAT_STATE_* constant'''
 
-        # initialize ADC readings
+        # initialize ADC reading variables
         self.vbus = 0.0  # input voltage (volts)
         self.ibus = 0.0  # input current (amps)
         self.vbat = 0.0  # battery voltage (volts)
@@ -163,20 +197,26 @@ class BQ25798:
         self.ts = 0.0  # external temperature sensor (°C)
         self.tdie = 0.0  # die temperature (°C)
 
-        # initalize fault status
+        # initalize fault status variables
         self.input_over_voltage_fault = False
         self.input_under_voltage_fault = False
         self.input_over_current_fault = False
-        self.battery_over_voltage_fault = False
-        self.battery_over_current_fault = False
-        self.temperature_sensor_fault = False
-        self.die_over_temperature_fault = False
+        self.bat_over_voltage_fault = False
+        self.bat_over_current_fault = False
+        self.bat_temp_fault = False
+        self.die_temp_fault = False
         self.charging_fault = False
+
+        # ensure ship mode is disabled
+        if self.ship_mode_enabled():
+            self.disable_ship_mode()
 
         logging.info(f'BQ25798 initalized on I2C address {self.address}')
 
         # initialize configuration
         self.set_charge_parameters(charge_voltage, charge_current)
+        self.set_usb_sourcing_voltage(5.0) # 5V
+        self.set_usb_sourcing_current(3.0) # 3A
         self.set_adc_one_shot_mode()
         self.disable_mppt()
 
@@ -185,24 +225,26 @@ class BQ25798:
         # initialize fault status
         self.update_fault_status()
 
-        # initialize state
-        # start async adc readings and charge state loop
+        # start job loop thread
         job_thread = threading.Thread(target=self._job_loop, daemon=True)
         job_thread.start()
 
     def _job_loop(self):
+        '''Jop loop to execute reoccuring tasks.
+
+        Updates ADC readings, battery state, and fault status. Exists when I2C bus is closed (ex. self.close() is called).
+        '''
         # SMBus.fd is set to None after SMBus.close() is called
         while self.bus.fd is not None:
             time.sleep(self.async_update_seconds)
 
-            # update adc readings
-            with self.adc_lock:
+            # update ADC readings
+            with self._adc_lock:
                 self.update_adc_readings()
 
             # update state
             previous_state = self.state
-
-            with self.state_lock:
+            with self._state_lock:
                 if self.charging()
                     if self.battery_percentage() < 100:
                         self.state = self.BAT_STATE_CHARGING
@@ -213,52 +255,64 @@ class BQ25798:
 
             if self.state != previous_state
                 logging.info(f'State change: {self.state}')
-
                 # state change callback
                 if self.state_change_callback is not None:
                     self.state_change_callback(self.state)
 
             # update fault status
-            with self.fault_lock:
-                previous_faults = {
-                    'input_over_voltage_fault': self.input_over_voltage_fault,
-                    'input_under_voltage_fault': self.input_under_voltage_fault,
-                    'input_over_current_fault': self.input_over_current_fault,
-                    'battery_over_voltage_fault': self.battery_over_voltage_fault,
-                    'battery_over_current_fault': self.battery_over_current_fault,
-                    'temperature_sensor_fault': self.temperature_sensor_fault,
-                    'die_over_temperature_fault': self.die_over_temperature_fault,
-                    'charging_fault': self.charging_fault,
-                }
-
+            previous_faults = {
+                self.FAULT_INPUT_OVER_VOLTAGE  : self.input_over_voltage_fault,
+                self.FAULT_INPUT_UNDER_VOLTAGE : self.input_under_voltage_fault,
+                self.FAULT_INPUT_OVER_CURRENT  : self.input_over_current_fault,
+                self.FAULT_BAT_OVER_VOLTAGE    : self.battery_over_voltage_fault,
+                self.FAULT_BAT_OVER_CURRENT    : self.battery_over_current_fault,
+                self.FAULT_BAT_TEMP            : self.temperature_sensor_fault,
+                self.FAULT_DIE_TEMP            : self.die_over_temperature_fault,
+                self.FAULT_CHARGING            : self.charging_fault,
+            }
+            
+            with self._fault_lock:
                 self.update_fault_status()
 
-                for fault, previous_status in previous_faults.items():
-                    current_status = getattr(self, fault)
-                    if previous_status != current_status:
-                        logging.info(f'Fault state change: {fault} {'active' if current_status else 'inactive'}')
+            current_faults = {
+                self.FAULT_INPUT_OVER_VOLTAGE  : self.input_over_voltage_fault,
+                self.FAULT_INPUT_UNDER_VOLTAGE : self.input_under_voltage_fault,
+                self.FAULT_INPUT_OVER_CURRENT  : self.input_over_current_fault,
+                self.FAULT_BAT_OVER_VOLTAGE    : self.battery_over_voltage_fault,
+                self.FAULT_BAT_OVER_CURRENT    : self.battery_over_current_fault,
+                self.FAULT_BAT_TEMP            : self.temperature_sensor_fault,
+                self.FAULT_DIE_TEMP            : self.die_over_temperature_fault,
+                self.FAULT_CHARGING            : self.charging_fault,
+            }
 
-                # fault change callback
-                if self.fault_change_callback is not None:
-                    self.fault_change_callback(fault, current_status)
+            for fault, previous_status in previous_faults.items():
+                current_status = current_faults[fault]
+                if previous_status != current_status:
+                    logging.info(f'Fault status change: {fault} {'active' if current_status else 'inactive'}')
+                    # fault change callback
+                    if self.fault_change_callback is not None:
+                        self.fault_change_callback(fault, current_status)
         
     def _read_register(self, reg_address, reg_bits=16):
-        '''Read register value
+        '''Read register value.
 
         Args:
             reg_address (int): Register address to read (example: 0x20)
             reg_bits (int): Number of bits in the specified register (8 or 16), defaults to 16
 
+        Returns:
+            byte: Register value
+
         Raises:
-            ValueError: Invalid reg_bits value, only 8 or 16 are supported
+            ValueError: Invalid reg_bits value, only 8 and 16 are supported
         '''
         if reg_bits == 16:
             data = self.bus.read_word_data(self.address, reg_address)
-            return (data & 0xFF) << 8 | (data >> 8)  # Swap byte order
+            return (data & 0xFF) << 8 | (data >> 8)  # swap byte order
         elif reg_bits == 8:
             return self.bus.read_byte_data(self.address, reg_address)
         else:
-            raise ValueError('Invalid reg_bits value, only 8 or 16 are supported')
+            raise ValueError('Invalid reg_bits value, only 8 and 16 are supported')
 
     def _write_register(self, reg_address, value, reg_bits=16):
         '''Write register value
@@ -268,15 +322,15 @@ class BQ25798:
             reg_bits (int): Number of bits in the specified register (8 or 16), defaults to 16
 
         Raises:
-            ValueError: Invalid reg_bits value, only 8 or 16 are supported
+            ValueError: Invalid reg_bits value, only 8 and 16 are supported
         '''
         if reg_bits == 16:
-            data = ((value & 0xFF) << 8) | (value >> 8)  # Swap byte order
+            data = ((value & 0xFF) << 8) | (value >> 8) # swap byte order
             self.bus.write_word_data(self.address, reg_address, data)
         elif reg_bits == 8:
             self.bus.write_byte_data(self.address, reg_address, value)
         else:
-            raise ValueError('Invalid reg_bits value, only 8 or 16 are supported')
+            raise ValueError('Invalid reg_bits value, only 8 and 16 are supported')
 
     def close(self):
         '''Close the I2C bus connection.'''
@@ -287,33 +341,32 @@ class BQ25798:
     
     ### ADC Functions ###
     def enable_adc(self):
-        '''Enable ADC'''
+        '''Set ADC enable bit.'''
         reg_value = self._read_register(self.REG_ADC_CTRL)
-        reg_value |= (1 << 0)  # Enable ADC
+        reg_value |= (1 << 0) # set enable bit
         self._write_register(self.REG_ADC_CTRL, reg_value)
         logging.info('ADC enabled')
 
     def disable_adc(self):
-        '''Disable ADC'''
+        '''Clear ADC enable bit.'''
         reg_value = self._read_register(self.REG_ADC_CTRL)
-        reg_value &= ~(1 << 0)  # Disable ADC
+        reg_value &= ~(1 << 0) # clear enable bit
         self._write_register(self.REG_ADC_CTRL, reg_value)
         logging.info('ADC disabled')
 
     def adc_enabled(self):
-        '''
-        Check if ADC is enabled.
+        '''Check if ADC is enabled.
     
         Returns:
             bool: True if ADC is enabled, False otherwise
         '''
         reg_value = self._read_register(self.REG_ADC_CTRL, reg_bits=8)
-        return bool(reg_value & (1 << 0))  # check if ADC_EN bit is set
+        return bool(reg_value & (1 << 0)) # enable bit to boolean
         
     def set_adc_one_shot_mode(self):
-        '''Set ADC to one-shot mode for minimal quiescent current'''
+        '''Set ADC to one-shot mode.'''
         reg_value = self._read_register(self.REG_ADC_CTRL)
-        reg_value |= (1 << 1)  # Set ADC_ONE_SHOT bit
+        reg_value |= (1 << 1) # Set ADC_ONE_SHOT bit
         self._write_register(self.REG_ADC_CTRL, reg_value)
         self.adc_mode = self.ADC_MODE_ONE_SHOT
         logging.info('ADC in one-shot mode')
@@ -321,39 +374,41 @@ class BQ25798:
     def set_adc_continuous_mode(self):
         '''Set the ADC to continuous mode.'''
         reg_value = self._read_register(self.REG_ADC_CTRL, reg_bits=8)
-        reg_value &= ~(1 << 1)  # clear the ADC_ONE_SHOT bit
-        reg_value |= (1 << 0)  # set the ADC_EN bit
+        reg_value &= ~(1 << 1) # clear the ADC_ONE_SHOT bit
+        reg_value |= (1 << 0) # set the ADC_EN bit
         self._write_register(self.REG_ADC_CTRL, reg_value, reg_bits=8)
         self.adc_mode = self.ADC_MODE_CONTINUOUS
         logging.info('ADC in continuous mode')
 
     def get_adc_mode(self):
-        '''
-        Get current ADC mode.
+        '''Get ADC operating mode.
     
         Returns:
-            str: 'one-shot' or 'continuious'
+            str: *ADC_MODE_ONE_SHOT* or *ADC_MODE_CONTINUOUS*
         '''
         reg_value = self._read_register(self.REG_ADC_CTRL, reg_bits=8)
-        if reg_value & (1 << 1):  # check if ADC_ONE_SHOT bit is set
+        if reg_value & (1 << 1): # check if ADC_ONE_SHOT bit is set
             return self.ADC_MODE_ONE_SHOT
         else:
             return self.ADC_MODE_CONTINUOUS
 
     def update_adc_readings(self):
-        '''Update all local ADC values.'''
+        '''Update local ADC reading values.
+
+        If ADC is in one-shot mode the ADC is enabled before updating readings, and disabled after updates are complete.
+        '''
         if self.adc_mode == self.ADC_MODE_ONE_SHOT:
             self.enable_adc()
-            time.sleep(0.1)  # allow time for ADC to complete conversions
+            time.sleep(0.1) # allow time for ADC to complete conversions
 
-        self.ibus = self._read_register(self.REG_ADC_IBUS) * 50 / 1000  # convert to A, 50mA per bit scaling factor
-        self.ibat = self._read_register(self.REG_ADC_IBAT) * 64 / 1000  # convert to A, 64mA per bit scaling factor
-        self.vbus = self._read_register(self.REG_ADC_VBUS) * 16 / 1000  # convert to V, 16mV per bit scaling factor
-        self.vpmid = self._read_register(self.REG_ADC_VPMID) * 16 / 1000  # convert to V, 16mV per bit scaling factor
-        self.vbat = self._read_register(self.REG_ADC_VBAT) * 16 / 1000  # convert to V, 16mV per bit scaling factor
-        self.vsys = self._read_register(self.REG_ADC_VSYS) * 16 / 1000  # convert to V, 16mV per bit scaling factor
-        self.ts = self._read_register(self.REG_ADC_TS) * 0.2  # convert to °C, 0.2°C per bit scaling factor
-        self.tdie = self._read_register(self.REG_ADC_TDIE) * 0.2  # convert to °C, 0.2°C per bit scaling factor
+        self.ibus = self._read_register(self.REG_ADC_IBUS) * 50 / 1000 # convert to A, 50mA per bit scaling factor
+        self.ibat = self._read_register(self.REG_ADC_IBAT) * 64 / 1000 # convert to A, 64mA per bit scaling factor
+        self.vbus = self._read_register(self.REG_ADC_VBUS) * 16 / 1000 # convert to V, 16mV per bit scaling factor
+        self.vpmid = self._read_register(self.REG_ADC_VPMID) * 16 / 1000 # convert to V, 16mV per bit scaling factor
+        self.vbat = self._read_register(self.REG_ADC_VBAT) * 16 / 1000 # convert to V, 16mV per bit scaling factor
+        self.vsys = self._read_register(self.REG_ADC_VSYS) * 16 / 1000 # convert to V, 16mV per bit scaling factor
+        self.ts = self._read_register(self.REG_ADC_TS) * 0.2 # convert to °C, 0.2°C per bit scaling factor
+        self.tdie = self._read_register(self.REG_ADC_TDIE) * 0.2 # convert to °C, 0.2°C per bit scaling factor
 
         if self.adc_mode == self.ADC_MODE_ONE_SHOT:
             self.disable_adc()
@@ -361,11 +416,10 @@ class BQ25798:
     
     ### Solar MPPT Input ###
     def enable_mppt(self, port=2):
-        '''
-        Enable MPPT (Maximum Power Point Tracking) for a specific port.
+        '''Enable MPPT (Maximum Power Point Tracking) for a specific port.
 
         Args:
-            port (int): Port to enable MPPT for (1 or 2), defaults to 2
+            port (int): Input port to enable MPPT for (1 or 2), defaults to 2
 
         Raises:
             ValueError: Invalid port number, must be 1 or 2
@@ -378,102 +432,120 @@ class BQ25798:
         # if MPPT is already enabled on a different port, disable it first
         current_port = (reg_value >> 1) & 0x01
         if current_port != (port - 1):
-            reg_value &= ~(1 << 1)  # clear MPPT_PORT bit
-            reg_value &= ~(1 << 0)  # disable MPPT
+            reg_value &= ~(1 << 1) # clear MPPT_PORT bit
+            reg_value &= ~(1 << 0) # disable MPPT
             self._write_register(self.REG_MPPT_CTRL, reg_value)
-            print(f'MPPT disabled on port {current_port + 1}.')
 
-        # enable MPPT for the selected port
-        reg_value |= (port - 1) << 1  # set MPPT_PORT bit
-        reg_value |= (1 << 0)  # enable MPPT
+        # enable MPPT for specified port
+        reg_value |= (port - 1) << 1 # set MPPT_PORT bit
+        reg_value |= (1 << 0) # enable MPPT
         self._write_register(self.REG_MPPT_CTRL, reg_value)
+        
         logging.info(f'MPPT enabled on port {port}.')
 
     def disable_mppt(self):
         '''Disable MPPT (Maximum Power Point Tracking).'''
         reg_value = self._read_register(self.REG_MPPT_CTRL)
-        reg_value &= ~(1 << 0)  # clear MPPT_EN bit
+        reg_value &= ~(1 << 0) # clear MPPT_EN bit
         self._write_register(self.REG_MPPT_CTRL, reg_value)
         logging.info('MPPT disabled')
 
     def mppt_enabled(self):
         '''
-        Check if MPPT is enabled.
+        Check if MPPT (Maximum Power Point Tracking) is enabled.
     
         Returns:
             bool: True if MPPT is enabled, False otherwise
         '''
         reg_value = self._read_register(self.REG_MPPT_CTRL, reg_bits=8)
-        return bool(reg_value & (1 << 0))  # check if the MPPT_EN bit (bit 0) is set
+        return bool(reg_value & (1 << 0)) # check if the enable bit is set
 
     
     ### Battery Charging ###
-    def get_charge_parameters(self):
-        '''
-        Get configured battery charging voltage and current.
+    def get_charge_voltage(self):
+        '''Get configured battery charging voltage.
     
         Returns:
-            tuple: A tuple containing charge voltage (in volts) and charge current (in amps)
+            float: Battery charge voltage in volts
         '''
         voltage_reg = self._read_register(self.REG_CHARGE_VOLTAGE)
-        current_reg = self._read_register(self.REG_CHARGE_CURRENT)
-    
-        charge_voltage = voltage_reg * 0.016  # scale 16mV per bit to volts
-        charge_current = current_reg * 0.064  # scale 64mA per bit to amps
-    
-        return charge_voltage, charge_current
+        charge_voltage = voltage_reg * 0.016 # scale 16mV per bit to volts
+        return charge_voltage
 
-    def set_charge_parameters(self, voltage_v, current_a):
-        '''Set battery charging voltage and current.
+    def set_charge_voltage(self, voltage_v):
+        '''Set battery charging voltage.
 
         Args:
             voltage_v (float): Battery charge voltage in volts
-            current_a (float): Battery charge current in amps
         '''
         self.charge_voltage = voltage_v
+
+        voltage_mv = int(voltage_v * 1000) # scale to mV
+        voltage_reg = voltage_mv // 16 # scale to 16mV per bit
+        self._write_register(self.REG_CHARGE_VOLTAGE, voltage_reg)
+        logging.info(f'Battery charge voltage set to {voltage_v}V')
+
+    def get_charge_current(self):
+        '''Get configured battery charging current.
+    
+        Returns:
+            float: Battery charge current in amps
+        '''
+        current_reg = self._read_register(self.REG_CHARGE_CURRENT)
+        charge_current = current_reg * 0.064 # scale 64mA per bit to amps
+        return charge_current
+
+    def set_charge_current(self, current_a):
+        '''Set battery charging current.
+
+        Args:
+            current_a (float): Battery charge current in amps
+        '''
         self.charge_current = current_a
 
-        voltage_mv = int(voltage_v * 1000)
-        current_ma = int(current_a * 1000)
-        voltage_reg = voltage_mv // 16  # LSB = 16mV
-        current_reg = current_ma // 64  # LSB = 64mA
-        self._write_register(self.REG_CHARGE_VOLTAGE, voltage_reg)
+        current_ma = int(current_a * 1000) # scale to mA
+        current_reg = current_ma // 64 # scale to 64mA per bit
         self._write_register(self.REG_CHARGE_CURRENT, current_reg)
-        logging.info(f'Battery charge parameters set: {voltage_v}V, {current_a}A')
+        logging.info(f'Battery charge current set to {current_a}A')
 
     def enable_charging(self):
         '''Enable battery charging.'''
         reg_value = self._read_register(self.REG_PROTECTION_CTRL)
-        reg_value |= (1 << 0)  # Enable charging
+        reg_value |= (1 << 0) # set enable bit
         self._write_register(self.REG_PROTECTION_CTRL, reg_value)
-        print('Charging enabled.')
+        logging.info('Battery charging enabled')
 
     def disable_charging(self):
         '''Disable battery charging.'''
         reg_value = self._read_register(self.REG_PROTECTION_CTRL)
-        reg_value &= ~(1 << 0)  # Disable charging
+        reg_value &= ~(1 << 0) # clear enable bit
         self._write_register(self.REG_PROTECTION_CTRL, reg_value)
-        print('Charging disabled.')
+        logging.info('Battery charging disabled')
         
     def charging_enabled(self):
-        '''
-        Whether battery charging enabled.
+        '''Whether battery charging is enabled.
     
         Returns:
             bool: True if charging is enabled, False otherwise
         '''
         reg_value = self._read_register(self.REG_PROTECTION_CTRL, reg_bits=8)
-        return bool(reg_value & (1 << 0))  # check if the CHARGE_EN bit (bit 0) is set
+        return bool(reg_value & (1 << 0)) # check if the enable bit is set
 
     def battery_charging(self): 
         return bool(self.charging_enabled() and self.ibat > 0)
 
     def battery_percentage(self):
-        '''
-        Estimate battery percentage based on voltage and battery chemistry.
-    
+        '''Estimate battery percentage based on voltage.
+
+        Based on:
+        - Battery chemistry state-of-charge curve points
+        - Number of series battery cells
+        - Battery voltage ADC reading
+        
+        Battery voltage ADC reading is scaled to per-cell voltage, and is then linearly interpolated between state-of-charge curve points. Percentage is clamped to 0-100.
+        
         Returns:
-            float: Estimated battery percentage (0-100%)
+            float: Estimated battery percentage (0-100)
         '''
         # per-cell voltage
         cell_voltage = self.vbat / self.num_cells
@@ -495,7 +567,7 @@ class BQ25798:
             if v1 <= cell_voltage <= v2:
                 # linear interpolation between v1 and v2
                 percentage = p1 + (cell_voltage - v1) * (p2 - p1) / (v2 - v1)
-                return max(0, min(100, percentage))  # clamp to [0, 100]
+                return max(0, min(100, percentage)) # clamp to [0, 100]
     
         # if voltage out of range, clamp to 0% or 100%
         if cell_voltage < soc_points[0][0]:
@@ -504,6 +576,17 @@ class BQ25798:
             return 100
 
     def battery_charge_stage(self):
+        ''' Get battery charge stage.
+
+        Charge stages:
+        - 'pre-charge'
+        - 'constant current'
+        - 'constant voltage'
+        - *None* (if not charging)
+
+        Returns:
+            str or None: Battery charge stage, or None if not charging
+        '''
         # determine charging stage based on battery voltage
         stage = None
 
@@ -518,92 +601,119 @@ class BQ25798:
         return stage
 
     def battery_charge_time_remaining(self):
+        '''Estimate battery charge time remaining.
+
+        Based on:
+        - Estimated battery percentage
+        - Battery capacity
+        - Configured battery charge current
+        
+        Returns:
+            int or None: Estimated charge time remaining in hours, or None if not charging
+        '''
         percent = self.battery_percentage()
 
         # calculate charge time remaining
-        if self.battery_charging() and percent < 100:
-            remaining_capacity = (1 - (percent / 100)) * self.bat_capacity_ah
-            return remaining_capacity / self.charge_current  # hours
+        if self.battery_charging():
+            if percent < 100:
+                remaining_capacity = (1 - (percent / 100)) * self.bat_capacity_ah
+                return remaining_capacity / self.charge_current # hours
+            else:
+                return 0
         else:
-            return 0
+            return None
 
     
     ### USB Sourcing ###
-    def get_usb_sourcing_parameters(self):
-        '''
-        Get configured USB sourcing voltage and current.
+    def get_usb_sourcing_voltage(self):
+        '''Get configured USB-C sourcing voltage.
     
         Returns:
-            tuple: A tuple containing USB sourcing voltage (in volts) and current (in amps)
+            float: USB-C sourcing voltage in volts
         '''
         voltage_reg = self._read_register(self.REG_USB_SOURCE_VOLTAGE)
-        current_reg = self._read_register(self.REG_USB_SOURCE_CURRENT)
-    
-        usb_voltage = voltage_reg * 0.016  # scale 16mV per bit to volts
-        usb_current = current_reg * 0.05   # scale 50mA per bit to amps
-    
-        return usb_voltage, usb_current
+        usb_voltage = voltage_reg * 0.016 # scale 16mV per bit to volts
+        return usb_voltage
 
-    def enable_usb_sourcing(self, voltage_v=5.0, current_a=3.0, port=1):
-        '''
-        Enable USB-C sourcing with specified voltage, current, and port.
-
+    def set_usb_sourcing_voltage(self, voltage_v):
+        '''Set USB-C sourcing voltage.
+    
         Args:
-            voltage_v (float): Sourcing voltage in volts, defaults to 5.0
-            current_a (float): Sourcing current in amps, defaults to 3.0
-            port (int): The port to enable sourcing on (1 or 2), defaults to 1
+            voltage_v (float): USB-C sourcing voltage in volts
+        '''
+        voltage_mv = int(voltage_v * 1000) # convert to mV
+        voltage_reg = int(voltage_mv / 16) # LSB is 16mV per bit
+        self._write_register(self.REG_USB_SOURCE_VOLTAGE, voltage_reg)
+        logging.info(f'USB sourcing voltage set to {voltage_v}V')
+
+    def get_usb_sourcing_current(self):
+        '''Get configured USB-C sourcing current.
+    
+        Returns:
+            float: USB-C sourcing current in amps
+        '''
+        current_reg = self._read_register(self.REG_USB_SOURCE_CURRENT)
+        usb_current = current_reg * 0.05 # scale 50mA per bit to amps
+        return usb_current
+    
+    def set_usb_sourcing_current(self, current_a):
+        '''Set USB-C sourcing current.
+    
+        Args:
+            current_a (float): USB-C sourcing current in amps
+        '''
+        current_ma = int(current_a * 1000) # convert to mA
+        current_reg = int(current_ma / 50) # LSB is 50mA per bit
+        self._write_register(self.REG_USB_SOURCE_CURRENT, current_reg)
+        logging.info(f'USB sourcing current set to {current_a}A')
+    
+    def enable_usb_sourcing(self, port=1):
+        '''Enable USB-C sourcing on specified input port.
+    
+        Args:
+            port (int): Input port to enable sourcing on (1 or 2), defaults to 1
+    
         Raises:
             ValueError: Invalid port number, must be 1 or 2
         '''
         if port not in [1, 2]:
             raise ValueError('Invalid port number, must be 1 or 2')
-
+    
         reg_value = self._read_register(self.REG_USB_SOURCE_CTRL)
-
+    
         # if sourcing is already enabled on a different port, disable it first
         current_port = (reg_value >> 1) & 0x01
         if current_port != (port - 1):
-            reg_value &= ~(1 << 1)  # clear SOURCE_PORT bit
-            reg_value &= ~(1 << 0)  # disable sourcing
+            reg_value &= ~(1 << 1) # clear SOURCE_PORT bit
+            reg_value &= ~(1 << 0) # clear enable bit
             self._write_register(self.REG_USB_SOURCE_CTRL, reg_value)
-            print(f'USB sourcing disabled on port {current_port + 1}.')
-
-        # set sourcing voltage and current
-        voltage_mv = int(voltage_v * 1000)
-        current_ma = int(current_a * 1000)
-        voltage_reg = int(voltage_mv / 16)  # voltage LSB is 16mV per bit
-        current_reg = int(current_ma / 50)  # current LSB is 50mA per bit
-        self._write_register(self.REG_USB_SOURCE_VOLTAGE, voltage_reg)
-        self._write_register(self.REG_USB_SOURCE_CURRENT, current_reg)
-
-        # enable sourcing on the selected port
-        reg_value |= (port - 1) << 1  # set SOURCE_PORT bit
-        reg_value |= (1 << 0)  # enable sourcing
+    
+        # enable sourcing on the specified port
+        reg_value |= (port - 1) << 1 # set SOURCE_PORT bit
+        reg_value |= (1 << 0) # set enable bit
         self._write_register(self.REG_USB_SOURCE_CTRL, reg_value)
-        logging.info(f'USB sourcing enabled on port {port}: {voltage_v}V, {current_a}A')
-
+        logging.info(f'USB sourcing enabled on port {port}')
+        
     def disable_usb_sourcing(self):
         '''Disable USB-C sourcing.'''
         reg_value = self._read_register(self.REG_USB_SOURCE_CTRL)
-        reg_value &= ~(1 << 0)  # clear SOURCE_EN bit
+        reg_value &= ~(1 << 0) # clear enable bit
         self._write_register(self.REG_USB_SOURCE_CTRL, reg_value)
-        logging.info('USB-C sourcing disabled')
+        logging.info('USB sourcing disabled')
 
     def usb_sourcing_enabled(self):
-        '''
-        Check if USB sourcing is enabled.
+        '''Check if USB-C sourcing is enabled.
     
         Returns:
-            bool: True if USB sourcing is enabled, False otherwise
+            bool: True if USB-C sourcing is enabled, False otherwise
         '''
         reg_value = self._read_register(self.REG_USB_SOURCE_CTRL, reg_bits=8)
-        return bool(reg_value & (1 << 0))  # check if the USB_SOURCE_EN bit (bit 0) is set
+        return bool(reg_value & (1 << 0)) # check if enable bit is set
 
     
     ### Ship and Shutdown Modes ###
-    def enter_ship_mode(self, delay_enabled=False):
-        '''
-        Enter ship mode to minimize quiescent current.
+    def enable_ship_mode(self, delay_enabled=False):
+        '''Enable ship mode.
     
         Args:
             delay_enabled (bool): Whether to delay 10 seconds before entering ship mode, defaults to False
@@ -611,53 +721,50 @@ class BQ25798:
         reg_value = self._read_register(self.REG_OTG_CONFIG)
         
         if delay_enabled:
-            reg_value |= (1 << 6)  # set SHIP_DLY_EN bit to enable 10-second delay
+            reg_value |= (1 << 6) # set SHIP_DLY_EN bit to enable 10-second delay
         else:
-            reg_value &= ~(1 << 6)  # clear SHIP_DLY_EN bit to disable 10-second delay
+            reg_value &= ~(1 << 6) # clear SHIP_DLY_EN bit to disable 10-second delay
     
-        reg_value |= (1 << 5)  # set SHIP_MODE bit to enter ship mode
+        reg_value |= (1 << 5) # set enable bit
         self._write_register(self.REG_OTG_CONFIG, reg_value)
-        
         logging.info(f'Entering ship mode{' after 10-second delay' if delay_enabled else ''}')
-
-    def exit_ship_mode(self):
-        '''Exit ship mode to enable normal charger operations.'''
+        
+    def disable_ship_mode(self):
+        '''disable ship mode.'''
         reg_value = self._read_register(self.REG_OTG_CONFIG)
-        reg_value &= ~(1 << 5)  # clear SHIP_MODE bit
+        reg_value &= ~(1 << 5) # clear enable bit
         self._write_register(self.REG_OTG_CONFIG, reg_value)
         logging.info('Exiting ship mode')
 
     def ship_mode_enabled(self):
-        '''
-        Check if ship mode is enabled.
+        '''Check if ship mode is enabled.
     
         Returns:
             bool: True if ship mode is enabled, False otherwise
         '''
         reg_value = self._read_register(self.REG_OTG_CONFIG, reg_bits=8)
-        return bool(reg_value & (1 << 5))  # check if the SHIP_MODE_EN bit (bit 5) is set
+        return bool(reg_value & (1 << 5))  # check if enable bit is set
 
-    def enter_shutdown_mode(self):
+    def enable_shutdown_mode(self):
         '''Enter shutdown mode.'''
         reg_value = self._read_register(self.REG_PROTECTION_CTRL)
-        reg_value |= (1 << 7)  # enable shutdown mode
+        reg_value |= (1 << 7) # set enable bit
         self._write_register(self.REG_PROTECTION_CTRL, reg_value)
         logging.info('Entering shutdown mode')
 
     
     ### Fault Status ###
     def update_fault_status(self):
-        '''
-        Update local fault status.
+        '''Update local fault status.
 
         Updates the following class variables:
             - input_over_voltage_fault
             - input_under_voltage_fault
             - input_over_current_fault
-            - battery_over_voltage_fault
-            - battery_over_current_fault
-            - temperature_sensor_fault
-            - die_over_temperature_fault
+            - bat_over_voltage_fault
+            - bat_over_current_fault
+            - bat_temp_fault
+            - die_temp_fault
             - charging_fault
         '''
         fault_reg = self._read_register(self.REG_FAULT_STATUS, reg_bits=8)
@@ -665,10 +772,10 @@ class BQ25798:
         self.input_over_voltage_fault = bool(fault_reg & (1 << 7))
         self.input_under_voltage_fault = bool(fault_reg & (1 << 6))
         self.input_over_current_fault = bool(fault_reg & (1 << 5))
-        self.battery_over_voltage_fault = bool(fault_reg & (1 << 4))
-        self.battery_over_current_fault = bool(fault_reg & (1 << 3))
-        self.temperature_sensor_fault = bool(fault_reg & (1 << 2))
-        self.die_over_temperature_fault = bool(fault_reg & (1 << 1))
+        self.bat_over_voltage_fault = bool(fault_reg & (1 << 4))
+        self.bat_over_current_fault = bool(fault_reg & (1 << 3))
+        self.bat_temp_fault = bool(fault_reg & (1 << 2))
+        self.die_temp_fault = bool(fault_reg & (1 << 1))
         self.charging_fault = bool(fault_reg & (1 << 0))
 
     
