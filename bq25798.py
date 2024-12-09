@@ -1,7 +1,6 @@
 # Datasheet: https://www.ti.com/lit/ds/symlink/bq25798.pdf
 #
 #TODO
-# - move reg constants into class obj
 # - improve docs
 
 
@@ -12,30 +11,6 @@ from logging.handlers import RotatingFileHandler
 
 import smbus2
 
-# register definitions
-REG_CHARGE_VOLTAGE = 0x04      # charge voltage control register
-REG_CHARGE_CURRENT = 0x02      # charge current control register
-REG_PRECHARGE_CURRENT = 0x06   # pre-charge and termination current control register
-REG_ADC_CTRL = 0x2C            # ADC control register
-REG_USB_SOURCE_VOLTAGE = 0x16  # USB-C sourcing voltage register
-REG_USB_SOURCE_CURRENT = 0x18  # USB-C sourcing current register
-REG_USB_SOURCE_CTRL = 0x19     # USB-C source control register
-REG_OTG_CONFIG = 0x09          # OTG and ship mode control register
-REG_MPPT_CTRL = 0x1A           # mppt control register
-REG_INPUT_SOURCE_CTRL = 0x1B   # input source control register
-REG_MIN_SYS_VOLTAGE = 0x0E     # minimum system voltage control register
-REG_TIMER_CONTROL = 0x12       # safety timer and watchdog control register
-REG_FAULT_STATUS = 0x20        # fault status register
-REG_PROTECTION_CTRL = 0x1C     # protection control register
-
-REG_ADC_IBUS = 0x34            # input current ADC result register
-REG_ADC_IBAT = 0x36            # battery charge/discharge current ADC result register
-REG_ADC_VBUS = 0x30            # input voltage ADC result register
-REG_ADC_VPMID = 0x38           # PMID voltage ADC result register
-REG_ADC_VBAT = 0x32            # battery voltage ADC result register
-REG_ADC_VSYS = 0x3A            # system voltage ADC result register
-REG_ADC_TS = 0x3C              # external temperature sensor ADC result register
-REG_ADC_TDIE = 0x3E            # die temperature ADC result register
 
 # configure logging
 logger = logging.getLogger('bq25798_log')
@@ -49,6 +24,31 @@ logger.addHandler(handler)
 
 
 class BQ25798:
+    # settings and control registers
+    REG_CHARGE_VOLTAGE = 0x04      # charge voltage control register
+    REG_CHARGE_CURRENT = 0x02      # charge current control register
+    REG_PRECHARGE_CURRENT = 0x06   # pre-charge and termination current control register
+    REG_ADC_CTRL = 0x2C            # ADC control register
+    REG_USB_SOURCE_VOLTAGE = 0x16  # USB-C sourcing voltage register
+    REG_USB_SOURCE_CURRENT = 0x18  # USB-C sourcing current register
+    REG_USB_SOURCE_CTRL = 0x19     # USB-C source control register
+    REG_OTG_CONFIG = 0x09          # OTG and ship mode control register
+    REG_MPPT_CTRL = 0x1A           # mppt control register
+    REG_INPUT_SOURCE_CTRL = 0x1B   # input source control register
+    REG_MIN_SYS_VOLTAGE = 0x0E     # minimum system voltage control register
+    REG_TIMER_CONTROL = 0x12       # safety timer and watchdog control register
+    REG_FAULT_STATUS = 0x20        # fault status register
+    REG_PROTECTION_CTRL = 0x1C     # protection control register
+    # ADC registers
+    REG_ADC_IBUS = 0x34            # input current ADC result register
+    REG_ADC_IBAT = 0x36            # battery charge/discharge current ADC result register
+    REG_ADC_VBUS = 0x30            # input voltage ADC result register
+    REG_ADC_VPMID = 0x38           # PMID voltage ADC result register
+    REG_ADC_VBAT = 0x32            # battery voltage ADC result register
+    REG_ADC_VSYS = 0x3A            # system voltage ADC result register
+    REG_ADC_TS = 0x3C              # external temperature sensor ADC result register
+    REG_ADC_TDIE = 0x3E            # die temperature ADC result register
+
     # battery chemistry
     BAT_CHEMISTRY_LIFEPO4 = 'LiFePo4'
     BAT_CHEMISTRY_LI_ION  = 'Li-ion'
@@ -106,7 +106,7 @@ class BQ25798:
 
     BAT_STATES = [BAT_STATE_DISCHARGING, BAT_STATE_CHARGING, BAT_STATE_CHARGED]
 
-    # adc modes
+    # ADC modes
     ADC_MODE_ONE_SHOT     = 'one-shot'
     ADC_MODE_CONTINUOUS   = 'continuous'
 
@@ -288,16 +288,16 @@ class BQ25798:
     ### ADC Functions ###
     def enable_adc(self):
         '''Enable ADC'''
-        reg_value = self._read_register(REG_ADC_CTRL)
+        reg_value = self._read_register(self.REG_ADC_CTRL)
         reg_value |= (1 << 0)  # Enable ADC
-        self._write_register(REG_ADC_CTRL, reg_value)
+        self._write_register(self.REG_ADC_CTRL, reg_value)
         logging.info('ADC enabled')
 
     def disable_adc(self):
         '''Disable ADC'''
-        reg_value = self._read_register(REG_ADC_CTRL)
+        reg_value = self._read_register(self.REG_ADC_CTRL)
         reg_value &= ~(1 << 0)  # Disable ADC
-        self._write_register(REG_ADC_CTRL, reg_value)
+        self._write_register(self.REG_ADC_CTRL, reg_value)
         logging.info('ADC disabled')
 
     def adc_enabled(self):
@@ -307,23 +307,23 @@ class BQ25798:
         Returns:
             bool: True if ADC is enabled, False otherwise
         '''
-        reg_value = self._read_register(REG_ADC_CTRL, reg_bits=8)
+        reg_value = self._read_register(self.REG_ADC_CTRL, reg_bits=8)
         return bool(reg_value & (1 << 0))  # check if ADC_EN bit is set
         
     def set_adc_one_shot_mode(self):
         '''Set ADC to one-shot mode for minimal quiescent current'''
-        reg_value = self._read_register(REG_ADC_CTRL)
+        reg_value = self._read_register(self.REG_ADC_CTRL)
         reg_value |= (1 << 1)  # Set ADC_ONE_SHOT bit
-        self._write_register(REG_ADC_CTRL, reg_value)
+        self._write_register(self.REG_ADC_CTRL, reg_value)
         self.adc_mode = self.ADC_MODE_ONE_SHOT
         logging.info('ADC in one-shot mode')
 
     def set_adc_continuous_mode(self):
         '''Set the ADC to continuous mode.'''
-        reg_value = self._read_register(REG_ADC_CTRL, reg_bits=8)
+        reg_value = self._read_register(self.REG_ADC_CTRL, reg_bits=8)
         reg_value &= ~(1 << 1)  # clear the ADC_ONE_SHOT bit
         reg_value |= (1 << 0)  # set the ADC_EN bit
-        self._write_register(REG_ADC_CTRL, reg_value, reg_bits=8)
+        self._write_register(self.REG_ADC_CTRL, reg_value, reg_bits=8)
         self.adc_mode = self.ADC_MODE_CONTINUOUS
         logging.info('ADC in continuous mode')
 
@@ -334,7 +334,7 @@ class BQ25798:
         Returns:
             str: 'one-shot' or 'continuious'
         '''
-        reg_value = self._read_register(REG_ADC_CTRL, reg_bits=8)
+        reg_value = self._read_register(self.REG_ADC_CTRL, reg_bits=8)
         if reg_value & (1 << 1):  # check if ADC_ONE_SHOT bit is set
             return self.ADC_MODE_ONE_SHOT
         else:
@@ -346,14 +346,14 @@ class BQ25798:
             self.enable_adc()
             time.sleep(0.1)  # allow time for ADC to complete conversions
 
-        self.ibus = self._read_register(REG_ADC_IBUS) * 50 / 1000  # convert to A, 50mA per bit scaling factor
-        self.ibat = self._read_register(REG_ADC_IBAT) * 64 / 1000  # convert to A, 64mA per bit scaling factor
-        self.vbus = self._read_register(REG_ADC_VBUS) * 16 / 1000  # convert to V, 16mV per bit scaling factor
-        self.vpmid = self._read_register(REG_ADC_VPMID) * 16 / 1000  # convert to V, 16mV per bit scaling factor
-        self.vbat = self._read_register(REG_ADC_VBAT) * 16 / 1000  # convert to V, 16mV per bit scaling factor
-        self.vsys = self._read_register(REG_ADC_VSYS) * 16 / 1000  # convert to V, 16mV per bit scaling factor
-        self.ts = self._read_register(REG_ADC_TS) * 0.2  # convert to °C, 0.2°C per bit scaling factor
-        self.tdie = self._read_register(REG_ADC_TDIE) * 0.2  # convert to °C, 0.2°C per bit scaling factor
+        self.ibus = self._read_register(self.REG_ADC_IBUS) * 50 / 1000  # convert to A, 50mA per bit scaling factor
+        self.ibat = self._read_register(self.REG_ADC_IBAT) * 64 / 1000  # convert to A, 64mA per bit scaling factor
+        self.vbus = self._read_register(self.REG_ADC_VBUS) * 16 / 1000  # convert to V, 16mV per bit scaling factor
+        self.vpmid = self._read_register(self.REG_ADC_VPMID) * 16 / 1000  # convert to V, 16mV per bit scaling factor
+        self.vbat = self._read_register(self.REG_ADC_VBAT) * 16 / 1000  # convert to V, 16mV per bit scaling factor
+        self.vsys = self._read_register(self.REG_ADC_VSYS) * 16 / 1000  # convert to V, 16mV per bit scaling factor
+        self.ts = self._read_register(self.REG_ADC_TS) * 0.2  # convert to °C, 0.2°C per bit scaling factor
+        self.tdie = self._read_register(self.REG_ADC_TDIE) * 0.2  # convert to °C, 0.2°C per bit scaling factor
 
         if self.adc_mode == self.ADC_MODE_ONE_SHOT:
             self.disable_adc()
@@ -373,27 +373,27 @@ class BQ25798:
         if port not in (1, 2):
             raise ValueError('Invalid port number, must be 1 or 2')
 
-        reg_value = self._read_register(REG_MPPT_CTRL)
+        reg_value = self._read_register(self.REG_MPPT_CTRL)
 
         # if MPPT is already enabled on a different port, disable it first
         current_port = (reg_value >> 1) & 0x01
         if current_port != (port - 1):
             reg_value &= ~(1 << 1)  # clear MPPT_PORT bit
             reg_value &= ~(1 << 0)  # disable MPPT
-            self._write_register(REG_MPPT_CTRL, reg_value)
+            self._write_register(self.REG_MPPT_CTRL, reg_value)
             print(f'MPPT disabled on port {current_port + 1}.')
 
         # enable MPPT for the selected port
         reg_value |= (port - 1) << 1  # set MPPT_PORT bit
         reg_value |= (1 << 0)  # enable MPPT
-        self._write_register(REG_MPPT_CTRL, reg_value)
+        self._write_register(self.REG_MPPT_CTRL, reg_value)
         logging.info(f'MPPT enabled on port {port}.')
 
     def disable_mppt(self):
         '''Disable MPPT (Maximum Power Point Tracking).'''
-        reg_value = self._read_register(REG_MPPT_CTRL)
+        reg_value = self._read_register(self.REG_MPPT_CTRL)
         reg_value &= ~(1 << 0)  # clear MPPT_EN bit
-        self._write_register(REG_MPPT_CTRL, reg_value)
+        self._write_register(self.REG_MPPT_CTRL, reg_value)
         logging.info('MPPT disabled')
 
     def mppt_enabled(self):
@@ -403,7 +403,7 @@ class BQ25798:
         Returns:
             bool: True if MPPT is enabled, False otherwise
         '''
-        reg_value = self._read_register(REG_MPPT_CTRL, reg_bits=8)
+        reg_value = self._read_register(self.REG_MPPT_CTRL, reg_bits=8)
         return bool(reg_value & (1 << 0))  # check if the MPPT_EN bit (bit 0) is set
 
     
@@ -415,8 +415,8 @@ class BQ25798:
         Returns:
             tuple: A tuple containing charge voltage (in volts) and charge current (in amps)
         '''
-        voltage_reg = self._read_register(REG_CHARGE_VOLTAGE)
-        current_reg = self._read_register(REG_CHARGE_CURRENT)
+        voltage_reg = self._read_register(self.REG_CHARGE_VOLTAGE)
+        current_reg = self._read_register(self.REG_CHARGE_CURRENT)
     
         charge_voltage = voltage_reg * 0.016  # scale 16mV per bit to volts
         charge_current = current_reg * 0.064  # scale 64mA per bit to amps
@@ -437,22 +437,22 @@ class BQ25798:
         current_ma = int(current_a * 1000)
         voltage_reg = voltage_mv // 16  # LSB = 16mV
         current_reg = current_ma // 64  # LSB = 64mA
-        self._write_register(REG_CHARGE_VOLTAGE, voltage_reg)
-        self._write_register(REG_CHARGE_CURRENT, current_reg)
+        self._write_register(self.REG_CHARGE_VOLTAGE, voltage_reg)
+        self._write_register(self.REG_CHARGE_CURRENT, current_reg)
         logging.info(f'Battery charge parameters set: {voltage_v}V, {current_a}A')
 
     def enable_charging(self):
         '''Enable battery charging.'''
-        reg_value = self._read_register(REG_PROTECTION_CTRL)
+        reg_value = self._read_register(self.REG_PROTECTION_CTRL)
         reg_value |= (1 << 0)  # Enable charging
-        self._write_register(REG_PROTECTION_CTRL, reg_value)
+        self._write_register(self.REG_PROTECTION_CTRL, reg_value)
         print('Charging enabled.')
 
     def disable_charging(self):
         '''Disable battery charging.'''
-        reg_value = self._read_register(REG_PROTECTION_CTRL)
+        reg_value = self._read_register(self.REG_PROTECTION_CTRL)
         reg_value &= ~(1 << 0)  # Disable charging
-        self._write_register(REG_PROTECTION_CTRL, reg_value)
+        self._write_register(self.REG_PROTECTION_CTRL, reg_value)
         print('Charging disabled.')
         
     def charging_enabled(self):
@@ -462,7 +462,7 @@ class BQ25798:
         Returns:
             bool: True if charging is enabled, False otherwise
         '''
-        reg_value = self._read_register(REG_PROTECTION_CTRL, reg_bits=8)
+        reg_value = self._read_register(self.REG_PROTECTION_CTRL, reg_bits=8)
         return bool(reg_value & (1 << 0))  # check if the CHARGE_EN bit (bit 0) is set
 
     def battery_charging(self): 
@@ -536,8 +536,8 @@ class BQ25798:
         Returns:
             tuple: A tuple containing USB sourcing voltage (in volts) and current (in amps)
         '''
-        voltage_reg = self._read_register(REG_USB_SOURCE_VOLTAGE)
-        current_reg = self._read_register(REG_USB_SOURCE_CURRENT)
+        voltage_reg = self._read_register(self.REG_USB_SOURCE_VOLTAGE)
+        current_reg = self._read_register(self.REG_USB_SOURCE_CURRENT)
     
         usb_voltage = voltage_reg * 0.016  # scale 16mV per bit to volts
         usb_current = current_reg * 0.05   # scale 50mA per bit to amps
@@ -558,14 +558,14 @@ class BQ25798:
         if port not in [1, 2]:
             raise ValueError('Invalid port number, must be 1 or 2')
 
-        reg_value = self._read_register(REG_USB_SOURCE_CTRL)
+        reg_value = self._read_register(self.REG_USB_SOURCE_CTRL)
 
         # if sourcing is already enabled on a different port, disable it first
         current_port = (reg_value >> 1) & 0x01
         if current_port != (port - 1):
             reg_value &= ~(1 << 1)  # clear SOURCE_PORT bit
             reg_value &= ~(1 << 0)  # disable sourcing
-            self._write_register(REG_USB_SOURCE_CTRL, reg_value)
+            self._write_register(self.REG_USB_SOURCE_CTRL, reg_value)
             print(f'USB sourcing disabled on port {current_port + 1}.')
 
         # set sourcing voltage and current
@@ -573,20 +573,20 @@ class BQ25798:
         current_ma = int(current_a * 1000)
         voltage_reg = int(voltage_mv / 16)  # voltage LSB is 16mV per bit
         current_reg = int(current_ma / 50)  # current LSB is 50mA per bit
-        self._write_register(REG_USB_SOURCE_VOLTAGE, voltage_reg)
-        self._write_register(REG_USB_SOURCE_CURRENT, current_reg)
+        self._write_register(self.REG_USB_SOURCE_VOLTAGE, voltage_reg)
+        self._write_register(self.REG_USB_SOURCE_CURRENT, current_reg)
 
         # enable sourcing on the selected port
         reg_value |= (port - 1) << 1  # set SOURCE_PORT bit
         reg_value |= (1 << 0)  # enable sourcing
-        self._write_register(REG_USB_SOURCE_CTRL, reg_value)
+        self._write_register(self.REG_USB_SOURCE_CTRL, reg_value)
         logging.info(f'USB sourcing enabled on port {port}: {voltage_v}V, {current_a}A')
 
     def disable_usb_sourcing(self):
         '''Disable USB-C sourcing.'''
-        reg_value = self._read_register(REG_USB_SOURCE_CTRL)
+        reg_value = self._read_register(self.REG_USB_SOURCE_CTRL)
         reg_value &= ~(1 << 0)  # clear SOURCE_EN bit
-        self._write_register(REG_USB_SOURCE_CTRL, reg_value)
+        self._write_register(self.REG_USB_SOURCE_CTRL, reg_value)
         logging.info('USB-C sourcing disabled')
 
     def usb_sourcing_enabled(self):
@@ -596,7 +596,7 @@ class BQ25798:
         Returns:
             bool: True if USB sourcing is enabled, False otherwise
         '''
-        reg_value = self._read_register(REG_USB_SOURCE_CTRL, reg_bits=8)
+        reg_value = self._read_register(self.REG_USB_SOURCE_CTRL, reg_bits=8)
         return bool(reg_value & (1 << 0))  # check if the USB_SOURCE_EN bit (bit 0) is set
 
     
@@ -608,7 +608,7 @@ class BQ25798:
         Args:
             delay_enabled (bool): Whether to delay 10 seconds before entering ship mode, defaults to False
         '''
-        reg_value = self._read_register(REG_OTG_CONFIG)
+        reg_value = self._read_register(self.REG_OTG_CONFIG)
         
         if delay_enabled:
             reg_value |= (1 << 6)  # set SHIP_DLY_EN bit to enable 10-second delay
@@ -616,15 +616,15 @@ class BQ25798:
             reg_value &= ~(1 << 6)  # clear SHIP_DLY_EN bit to disable 10-second delay
     
         reg_value |= (1 << 5)  # set SHIP_MODE bit to enter ship mode
-        self._write_register(REG_OTG_CONFIG, reg_value)
+        self._write_register(self.REG_OTG_CONFIG, reg_value)
         
         logging.info(f'Entering ship mode{' after 10-second delay' if delay_enabled else ''}')
 
     def exit_ship_mode(self):
         '''Exit ship mode to enable normal charger operations.'''
-        reg_value = self._read_register(REG_OTG_CONFIG)
+        reg_value = self._read_register(self.REG_OTG_CONFIG)
         reg_value &= ~(1 << 5)  # clear SHIP_MODE bit
-        self._write_register(REG_OTG_CONFIG, reg_value)
+        self._write_register(self.REG_OTG_CONFIG, reg_value)
         logging.info('Exiting ship mode')
 
     def ship_mode_enabled(self):
@@ -634,14 +634,14 @@ class BQ25798:
         Returns:
             bool: True if ship mode is enabled, False otherwise
         '''
-        reg_value = self._read_register(REG_OTG_CONFIG, reg_bits=8)
+        reg_value = self._read_register(self.REG_OTG_CONFIG, reg_bits=8)
         return bool(reg_value & (1 << 5))  # check if the SHIP_MODE_EN bit (bit 5) is set
 
     def enter_shutdown_mode(self):
         '''Enter shutdown mode.'''
-        reg_value = self._read_register(REG_PROTECTION_CTRL)
+        reg_value = self._read_register(self.REG_PROTECTION_CTRL)
         reg_value |= (1 << 7)  # enable shutdown mode
-        self._write_register(REG_PROTECTION_CTRL, reg_value)
+        self._write_register(self.REG_PROTECTION_CTRL, reg_value)
         logging.info('Entering shutdown mode')
 
     
@@ -660,7 +660,7 @@ class BQ25798:
             - die_over_temperature_fault
             - charging_fault
         '''
-        fault_reg = self._read_register(REG_FAULT_STATUS, reg_bits=8)
+        fault_reg = self._read_register(self.REG_FAULT_STATUS, reg_bits=8)
 
         self.input_over_voltage_fault = bool(fault_reg & (1 << 7))
         self.input_under_voltage_fault = bool(fault_reg & (1 << 6))
@@ -680,7 +680,7 @@ class BQ25798:
         Returns:
             tuple: A tuple containing precharge timeout (minutes) and fast charge timeout (minutes)
         '''
-        reg_value = self._read_register(REG_TIMER_CONTROL, reg_bits=8)
+        reg_value = self._read_register(self.REG_TIMER_CONTROL, reg_bits=8)
         precharge_timeout = (reg_value & 0x0F) * 10  # lower 4 bits, scaled by 10 minutes
         fast_charge_timeout = ((reg_value >> 4) & 0x0F) * 40  # upper 4 bits, scaled by 40 minutes
         return precharge_timeout, fast_charge_timeout
@@ -696,7 +696,7 @@ class BQ25798:
         precharge_val = min(max(precharge_timeout, 0), 60) // 10
         fastcharge_val = min(max(fast_charge_timeout, 0), 320) // 40
         timer_reg = (fastcharge_val << 4) | precharge_val
-        self._write_register(REG_TIMER_CONTROL, timer_reg, reg_bits=8)
+        self._write_register(self.REG_TIMER_CONTROL, timer_reg, reg_bits=8)
         logging.info(f'Safety timers set: precharge = {precharge_timeout} min, fast charge = {fast_charge_timeout} min')
         
 
@@ -723,8 +723,8 @@ class BQ25798:
             raise ValueError('invalid port number. port must be 1 or 2.')
     
         # read status from relevant registers
-        input_source_ctrl = self._read_register(REG_INPUT_SOURCE_CTRL, reg_bits=8)
-        mppt_ctrl = self._read_register(REG_MPPT_CTRL, reg_bits=8)
+        input_source_ctrl = self._read_register(self.REG_INPUT_SOURCE_CTRL, reg_bits=8)
+        mppt_ctrl = self._read_register(self.REG_MPPT_CTRL, reg_bits=8)
     
         # determine port sourcing/sinking status
         is_sourcing = bool(input_source_ctrl & (1 << 7))  # sourcing bit
@@ -735,14 +735,14 @@ class BQ25798:
     
         # check input current limit and input voltage if sinking
         input_current_limit = (input_source_ctrl & 0xFF) * 0.05 if is_sinking else None  # convert 50mA/bit to amps
-        input_voltage = self._read_register(REG_ADC_VBUS) * 0.016 if is_sinking else None  # convert 16mV/bit to volts
+        input_voltage = self._read_register(self.REG_ADC_VBUS) * 0.016 if is_sinking else None  # convert 16mV/bit to volts
     
         # include mppt information if port is configured for mppt
         mppt_enabled = bool(mppt_ctrl & (1 << 0)) and ((mppt_ctrl >> 1) & 0x01) == (port - 1)
     
         # retrieve sourcing voltage and current if sourcing
-        usb_source_voltage = self._read_register(REG_USB_SOURCE_VOLTAGE) if is_sourcing else None
-        usb_source_current = self._read_register(REG_USB_SOURCE_CURRENT) if is_sourcing else None
+        usb_source_voltage = self._read_register(self.REG_USB_SOURCE_VOLTAGE) if is_sourcing else None
+        usb_source_current = self._read_register(self.REG_USB_SOURCE_CURRENT) if is_sourcing else None
         sourcing_voltage = usb_source_voltage * 0.016 if usb_source_voltage is not None else None  # convert 16mV/bit to volts
         sourcing_current = usb_source_current * 0.05 if usb_source_current is not None else None  # convert 50mA/bit to amps
     
@@ -764,7 +764,7 @@ class BQ25798:
         Returns:
             float: Input current limit in amps
         '''
-        reg_value = self._read_register(REG_INPUT_SOURCE_CTRL, reg_bits=8)
+        reg_value = self._read_register(self.REG_INPUT_SOURCE_CTRL, reg_bits=8)
         return (reg_value & 0xFF) * 0.05  # scale 50mA per bit to amps
 
     def set_input_current_limit(self, current_a):
@@ -775,7 +775,7 @@ class BQ25798:
         '''
         current_ma = int(current_a * 1000)
         input_limit_reg = current_ma // 50  # LSB = 50mA
-        self._write_register(REG_INPUT_SOURCE_CTRL, input_limit_reg, reg_bits=8)
+        self._write_register(self.REG_INPUT_SOURCE_CTRL, input_limit_reg, reg_bits=8)
         logging.info(f'Input current limit set to {current_a}A')
 
     def get_minimum_system_voltage(self):
@@ -785,7 +785,7 @@ class BQ25798:
         Returns:
             float: Minimum system voltage in volts
         '''
-        reg_value = self._read_register(REG_MIN_SYS_VOLTAGE, reg_bits=16)
+        reg_value = self._read_register(self.REG_MIN_SYS_VOLTAGE, reg_bits=16)
         return reg_value * 0.016  # scale 16mV per bit to volts
     
     def set_minimum_system_voltage(self, voltage_v):
@@ -796,6 +796,6 @@ class BQ25798:
         '''
         voltage_mv = int(voltage_v * 1000)
         min_sys_reg = voltage_mv // 16  # LSB = 16mV
-        self._write_register(REG_MIN_SYS_VOLTAGE, min_sys_reg)
+        self._write_register(self.REG_MIN_SYS_VOLTAGE, min_sys_reg)
         logging.info(f'Minimum system voltage set to {voltage_v}V')
     
