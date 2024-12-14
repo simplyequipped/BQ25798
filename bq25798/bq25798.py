@@ -22,29 +22,30 @@ logger.addHandler(handler)
 
 class BQ25798:
     # configuration and control registers
-    REG_CHARGE_VOLTAGE = 0x04      # charge voltage control register
-    REG_CHARGE_CURRENT = 0x02      # charge current control register
+    REG_CHARGE_VOLTAGE = 0x01      # charge voltage control register
+    REG_CHARGE_CURRENT = 0x03      # charge current control register
     REG_PRECHARGE_CURRENT = 0x06   # pre-charge and termination current control register
-    REG_ADC_CTRL = 0x2C            # ADC control register
+    REG_ADC_CTRL = 0x2E            # ADC control register
     REG_USB_SOURCE_VOLTAGE = 0x16  # USB-C sourcing voltage register
     REG_USB_SOURCE_CURRENT = 0x18  # USB-C sourcing current register
     REG_USB_SOURCE_CTRL = 0x19     # USB-C source control register
     REG_OTG_CONFIG = 0x09          # OTG and ship mode control register
     REG_MPPT_CTRL = 0x1A           # mppt control register
     REG_INPUT_SOURCE_CTRL = 0x1B   # input source control register
-    REG_MIN_SYS_VOLTAGE = 0x0E     # minimum system voltage control register
+    REG_MIN_SYS_VOLTAGE = 0x00     # minimum system voltage control register
     REG_TIMER_CONTROL = 0x12       # safety timer and watchdog control register
     REG_FAULT_STATUS = 0x20        # fault status register
     REG_PROTECTION_CTRL = 0x1C     # protection control register
     # ADC reading registers
-    REG_ADC_IBUS = 0x34            # input current ADC result register
-    REG_ADC_IBAT = 0x36            # battery charge/discharge current ADC result register
-    REG_ADC_VBUS = 0x30            # input voltage ADC result register
-    REG_ADC_VPMID = 0x38           # PMID voltage ADC result register
-    REG_ADC_VBAT = 0x32            # battery voltage ADC result register
-    REG_ADC_VSYS = 0x3A            # system voltage ADC result register
-    REG_ADC_TS = 0x3C              # external temperature sensor ADC result register
-    REG_ADC_TDIE = 0x3E            # die temperature ADC result register
+    REG_ADC_IBUS = 0x31            # input current ADC result register
+    REG_ADC_IBAT = 0x33            # battery charge/discharge current ADC result register
+    REG_ADC_VBUS = 0x35            # input voltage ADC result register
+    REG_ADC_VAC1 = 0x37            # port 1 voltage ADC result register
+    REG_ADC_VAC2 = 0x38            # port 2 voltage ADC result register
+    REG_ADC_VBAT = 0x3B            # battery voltage ADC result register
+    REG_ADC_VSYS = 0x3D            # system voltage ADC result register
+    REG_ADC_TS = 0x3F              # external temperature sensor ADC result register
+    REG_ADC_TDIE = 0x41            # die temperature ADC result register
     
     # battery chemistry
     BAT_CHEMISTRY_LIFEPO4 = 'LiFePo4'
@@ -117,7 +118,7 @@ class BQ25798:
     FAULT_CHARGING            = 'charging fault'
     FAULTS = [FAULT_INPUT_OVER_VOLTAGE, FAULT_INPUT_UNDER_VOLTAGE, FAULT_INPUT_OVER_CURRENT, FAULT_BAT_OVER_VOLTAGE, FAULT_BAT_OVER_CURRENT, FAULT_BAT_TEMP, FAULT_DIE_TEMP, FAULT_CHARGING]
 
-    def __init__(self, i2c_bus=1, i2c_address=0x6B, charge_voltage, charge_current, bat_series_cells, bat_chemistry, bat_capacity_ah):
+    def __init__(self, charge_voltage, charge_current, bat_series_cells, bat_chemistry, bat_capacity_ah, i2c_bus=1, i2c_address=0x6B):
         '''Initialize BQ25798 instance.
         
         Args:
@@ -155,19 +156,19 @@ class BQ25798:
         '''Battery chemistry (see BQ25798.BAT_CHEMISTRY_* constants), used for calculating battery percentage'''
         
         # close I2C bus at exit
-        atexit.register(self.close())
+        atexit.register(self.close)
         
         # validate battery chemistry
         if self.bat_chemistry not in self.BAT_CHEMISTRIES:
             raise ValueError('Unsupported battery chemistry')
         
         # validate battery charging parameters
-        if not (0 < charge_voltage <= 18.8:
+        if not (0 < charge_voltage <= 18.8):
             raise ValueError('Invalid charge voltage')
         if not (0 < charge_current <= 5):
             raise ValueError('Invalid charge current')
         
-        self.adc_mode = ADC_MODE_ONE_SHOT
+        self.adc_mode = self.ADC_MODE_ONE_SHOT
         '''ADC operating mode (see BQ25798.ADC_MODE_* constants)'''
         self.state = self.BAT_STATE_DISCHARGING
         '''Battery state (see BQ25798.BAT_STATE_* constants)'''
@@ -192,8 +193,10 @@ class BQ25798:
         '''Battery voltage ADC reading in volts'''
         self.ibat = 0.0
         '''Battery current ADC reading in amps'''
-        self.vpmid = 0.0
-        '''PMID voltage ADC reading in volts'''
+        self.vac1 = 0.0
+        '''Port 1 voltage ADC reading in volts'''
+        self.vac2 = 0.0
+        '''Port 2 voltage ADC reading in volts'''
         self.vsys = 0.0
         '''System voltage ADC reading in volts'''
         self.tbat = 0.0
@@ -218,7 +221,8 @@ class BQ25798:
         logging.info(f'BQ25798 initalized on I2C address {self.address}')
         
         # initialize configuration
-        self.set_charge_parameters(charge_voltage, charge_current)
+        self.set_charge_voltage(charge_voltage)
+        self.set_charge_current(charge_current)
         self.set_precharge_timeout(30) # 30 min
         self.set_fast_charge_timeout(180) # 180 min
         self.set_usb_sourcing_voltage(5.0) # 5V
@@ -231,9 +235,10 @@ class BQ25798:
         # initialize fault status
         self.update_fault_status()
         
+        #TODO
         # start job loop thread
-        job_thread = threading.Thread(target=self._job_loop, daemon=True)
-        job_thread.start()
+        #job_thread = threading.Thread(target=self._job_loop, daemon=True)
+        #job_thread.start()
     
     def _job_loop(self):
         '''Jop loop to execute reoccuring tasks.
@@ -251,7 +256,7 @@ class BQ25798:
             # update state
             previous_state = self.state
             with self._state_lock:
-                if self.charging()
+                if self.battery_charging():
                     if self.battery_percentage() < 100:
                         self.state = self.BAT_STATE_CHARGING
                     else:
@@ -259,7 +264,7 @@ class BQ25798:
                 else:
                     self.state = self.BAT_STATE_DISCHARGING
             
-            if self.state != previous_state
+            if self.state != previous_state:
                 logging.info(f'State change: {self.state}')
                 # state change callback
                 if self.state_change_callback is not None:
@@ -270,10 +275,10 @@ class BQ25798:
                 self.FAULT_INPUT_OVER_VOLTAGE  : self.input_over_voltage_fault,
                 self.FAULT_INPUT_UNDER_VOLTAGE : self.input_under_voltage_fault,
                 self.FAULT_INPUT_OVER_CURRENT  : self.input_over_current_fault,
-                self.FAULT_BAT_OVER_VOLTAGE    : self.battery_over_voltage_fault,
-                self.FAULT_BAT_OVER_CURRENT    : self.battery_over_current_fault,
-                self.FAULT_BAT_TEMP            : self.temperature_sensor_fault,
-                self.FAULT_DIE_TEMP            : self.die_over_temperature_fault,
+                self.FAULT_BAT_OVER_VOLTAGE    : self.bat_over_voltage_fault,
+                self.FAULT_BAT_OVER_CURRENT    : self.bat_over_current_fault,
+                self.FAULT_BAT_TEMP            : self.bat_temp_fault,
+                self.FAULT_DIE_TEMP            : self.die_temp_fault,
                 self.FAULT_CHARGING            : self.charging_fault,
             }
             
@@ -284,17 +289,17 @@ class BQ25798:
                 self.FAULT_INPUT_OVER_VOLTAGE  : self.input_over_voltage_fault,
                 self.FAULT_INPUT_UNDER_VOLTAGE : self.input_under_voltage_fault,
                 self.FAULT_INPUT_OVER_CURRENT  : self.input_over_current_fault,
-                self.FAULT_BAT_OVER_VOLTAGE    : self.battery_over_voltage_fault,
-                self.FAULT_BAT_OVER_CURRENT    : self.battery_over_current_fault,
-                self.FAULT_BAT_TEMP            : self.temperature_sensor_fault,
-                self.FAULT_DIE_TEMP            : self.die_over_temperature_fault,
+                self.FAULT_BAT_OVER_VOLTAGE    : self.bat_over_voltage_fault,
+                self.FAULT_BAT_OVER_CURRENT    : self.bat_over_current_fault,
+                self.FAULT_BAT_TEMP            : self.bat_temp_fault,
+                self.FAULT_DIE_TEMP            : self.die_temp_fault,
                 self.FAULT_CHARGING            : self.charging_fault,
             }
             
             for fault, previous_status in previous_faults.items():
                 current_status = current_faults[fault]
                 if previous_status != current_status:
-                    logging.info(f'Fault status change: {fault} {'active' if current_status else 'inactive'}')
+                    logging.info(f'Fault status change: {fault} {"active" if current_status else "inactive"}')
                     # fault change callback
                     if self.fault_change_callback is not None:
                         self.fault_change_callback(fault, current_status)
@@ -314,7 +319,10 @@ class BQ25798:
         '''
         if reg_bits == 16:
             data = self.bus.read_word_data(self.address, reg_address)
-            return (data & 0xFF) << 8 | (data >> 8)  # swap byte order
+            msb = (data >> 8) & 0xFF
+            lsb = data & 0xFF
+            value = (msb << 8) | lsb
+            return value
         elif reg_bits == 8:
             return self.bus.read_byte_data(self.address, reg_address)
         else:
@@ -331,7 +339,9 @@ class BQ25798:
             ValueError: Invalid reg_bits value, only 8 and 16 are supported
         '''
         if reg_bits == 16:
-            data = ((value & 0xFF) << 8) | (value >> 8) # swap byte order
+            msb = (value >> 8) & 0xFF
+            lsb = value & 0xFF
+            data = (msb << 8) | lsb
             self.bus.write_word_data(self.address, reg_address, data)
         elif reg_bits == 8:
             self.bus.write_byte_data(self.address, reg_address, value)
@@ -407,14 +417,15 @@ class BQ25798:
             self.enable_adc()
             time.sleep(0.1) # allow time for ADC to complete conversions
         
-        self.ibus = self._read_register(self.REG_ADC_IBUS) * 50 / 1000 # convert to A, 50mA per bit scaling factor
-        self.ibat = self._read_register(self.REG_ADC_IBAT) * 64 / 1000 # convert to A, 64mA per bit scaling factor
-        self.vbus = self._read_register(self.REG_ADC_VBUS) * 16 / 1000 # convert to V, 16mV per bit scaling factor
-        self.vpmid = self._read_register(self.REG_ADC_VPMID) * 16 / 1000 # convert to V, 16mV per bit scaling factor
-        self.vbat = self._read_register(self.REG_ADC_VBAT) * 16 / 1000 # convert to V, 16mV per bit scaling factor
-        self.vsys = self._read_register(self.REG_ADC_VSYS) * 16 / 1000 # convert to V, 16mV per bit scaling factor
-        self.tbat = self._read_register(self.REG_ADC_TS) * 0.2 # convert to °C, 0.2°C per bit scaling factor
-        self.tdie = self._read_register(self.REG_ADC_TDIE) * 0.2 # convert to °C, 0.2°C per bit scaling factor
+        self.ibus = self._read_register(self.REG_ADC_IBUS) / 1000 # convert to A, 1mA per bit scaling factor
+        self.ibat = self._read_register(self.REG_ADC_IBAT) / 1000 # convert to A, 1mA per bit scaling factor
+        self.vbus = self._read_register(self.REG_ADC_VBUS) / 1000 # convert to V, 1mV per bit scaling factor
+        self.vac1 = self._read_register(self.REG_ADC_VAC1) / 1000 # convert to V, 1mV per bit scaling factor
+        self.vac2 = self._read_register(self.REG_ADC_VAC2) / 1000 # convert to V, 1mV per bit scaling factor
+        self.vbat = self._read_register(self.REG_ADC_VBAT) / 1000 # convert to V, 1mV per bit scaling factor
+        self.vsys = self._read_register(self.REG_ADC_VSYS) / 1000 # convert to V, 1mV per bit scaling factor
+        self.tbat = self._read_register(self.REG_ADC_TS) * 0.0976563 # 0.0976563% per bit scaling factor
+        self.tdie = self._read_register(self.REG_ADC_TDIE) * 0.5 # convert to °C, 0.5°C per bit scaling factor
         
         if self.adc_mode == self.ADC_MODE_ONE_SHOT:
             self.disable_adc()
@@ -485,7 +496,8 @@ class BQ25798:
             float: Battery charge voltage in volts
         '''
         voltage_reg = self._read_register(self.REG_CHARGE_VOLTAGE)
-        charge_voltage = voltage_reg * 0.016 # scale 16mV per bit to volts
+        charge_voltage = voltage_reg * 16 / 1000 # scale 16mV per bit to volts
+        
         return charge_voltage
         
     def set_charge_voltage(self, voltage_v):
@@ -508,7 +520,7 @@ class BQ25798:
             float: Battery charge current in amps
         '''
         current_reg = self._read_register(self.REG_CHARGE_CURRENT)
-        charge_current = current_reg * 0.064 # scale 64mA per bit to amps
+        charge_current = current_reg * 64 / 1000 # scale 64mA per bit to amps
         return charge_current
         
     def set_charge_current(self, current_a):
@@ -795,7 +807,7 @@ class BQ25798:
         
         reg_value |= (1 << 5) # set enable bit
         self._write_register(self.REG_OTG_CONFIG, reg_value)
-        logging.info(f'Entering ship mode{' after 10-second delay' if delay_enabled else ''}')
+        logging.info(f'Entering ship mode{" after 10-second delay" if delay_enabled else ""}')
         
     def disable_ship_mode(self):
         '''disable ship mode.'''
@@ -861,7 +873,7 @@ class BQ25798:
             raise ValueError('Invalid port number, must be 1 or 2')
     
         input_source_ctrl = self._read_register(self.REG_INPUT_SOURCE_CTRL, reg_bits=8)
-        return = bool(input_source_ctrl & (1 << 6))
+        return bool(input_source_ctrl & (1 << 6))
 
     def get_input_current_limit(self):
         '''Get input current limit.
