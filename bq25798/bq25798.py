@@ -22,6 +22,7 @@ logger.addHandler(handler)
 
 class BQ25798:
     # configuration and control registers
+    REG_MIN_SYS_VOLTAGE = 0x00     # minimum system voltage control register
     REG_CHARGE_VOLTAGE = 0x01      # charge voltage control register
     REG_CHARGE_CURRENT = 0x03      # charge current control register
     REG_PRECHARGE_CURRENT = 0x06   # pre-charge and termination current control register
@@ -32,7 +33,6 @@ class BQ25798:
     REG_OTG_CONFIG = 0x09          # OTG and ship mode control register
     REG_MPPT_CTRL = 0x1A           # mppt control register
     REG_INPUT_SOURCE_CTRL = 0x1B   # input source control register
-    REG_MIN_SYS_VOLTAGE = 0x00     # minimum system voltage control register
     REG_TIMER_CONTROL = 0x12       # safety timer and watchdog control register
     REG_FAULT_STATUS = 0x20        # fault status register
     REG_PROTECTION_CTRL = 0x1C     # protection control register
@@ -304,49 +304,110 @@ class BQ25798:
                     if self.fault_change_callback is not None:
                         self.fault_change_callback(fault, current_status)
         
-    def _read_register(self, reg_address, reg_bits=16):
+    def _read_register(self, register, length=8, start=None, end=None):
         '''Read register value.
-        
+
         Args:
-            reg_address (int): Register address to read (example: 0x20)
-            reg_bits (int): Number of bits in the specified register (8 or 16), defaults to 16
+            register (int): Register address to read (example: 0x20)
+            length (int): Register length, defaults to 8
+            start (int): First bit for desired value, defaults to 0
+            end (int): Last bit for desired value, defaults to *length*-1
         
         Returns:
-            byte: Register value
+            bytes: Register value
         
         Raises:
-            ValueError: Invalid reg_bits value, only 8 and 16 are supported
+            ValueError: Register length must be 8 or 16
         '''
-        if reg_bits == 16:
-            data = self.bus.read_word_data(self.address, reg_address)
-            msb = (data >> 8) & 0xFF
-            lsb = data & 0xFF
-            value = (msb << 8) | lsb
-            return value
-        elif reg_bits == 8:
-            return self.bus.read_byte_data(self.address, reg_address)
-        else:
-            raise ValueError('Invalid reg_bits value, only 8 and 16 are supported')
+        if length not in (8, 16):
+            raise ValueError('Register length must be 8 or 16')
+
+        if start is None:
+            start = 0
+
+        if end is None:
+            end = length - 1
+
+        if length == 8:
+            value = self.bus.read_byte_data(self.address, register) # read 8 bits
+        elif length == 16:
+            value = self.bus.read_word_data(self.address, register) # read 16 bits
+
+        if start > 0:
+            value = (value >> start)
+
+        if end < (length - 1):
+            value_length = end - start + 1
+            value = value & self._bit_mask(value_length)
+
+        return value
+
+        #if reg_bits == 16:
+        #    data = self.bus.read_word_data(self.address, reg_address)
+        #    msb = (data >> 8) & 0xFF
+        #    lsb = data & 0xFF
+        #    value = (msb << 8) | lsb
+        #    return value
+        #elif reg_bits == 8:
+        #    return self.bus.read_byte_data(self.address, reg_address)
+        #else:
+        #    raise ValueError('Invalid reg_bits value, only 8 and 16 are supported')
         
-    def _write_register(self, reg_address, value, reg_bits=16):
+    def _write_register(self, register, value, length=8, value_length=None, start=0):
         '''Write register value
+
+        Use *value_length* to indicate a value less than the full register length. User *start* to indicate the starting bit for the value in the register. A typical use case is setting bits in a configuration register.
         
         Args:
-            reg_address (int): Register address to read (example: 0x20)
-            reg_bits (int): Number of bits in the specified register (8 or 16), defaults to 16
+            register (int): Register address to write (example: 0x20)
+            length (int): Register length, defaults to 8
+            value_length (int, None): Number of bits to write, defaults to *length*
+            start (in): First bit to write value, defaults to 0
         
         Raises:
-            ValueError: Invalid reg_bits value, only 8 and 16 are supported
+            ValueError: Register length must be 8 or 16
         '''
-        if reg_bits == 16:
-            msb = (value >> 8) & 0xFF
-            lsb = value & 0xFF
-            data = (msb << 8) | lsb
-            self.bus.write_word_data(self.address, reg_address, data)
-        elif reg_bits == 8:
-            self.bus.write_byte_data(self.address, reg_address, value)
-        else:
-            raise ValueError('Invalid reg_bits value, only 8 and 16 are supported')
+        #if length == 8:
+        #    reg_value = self._read_register(register, length=8)
+        #elif length == 16:
+        #    reg_value = self._read_register(register, length=16)
+
+        if length not in (8, 16):
+            raise ValueError('Register length must be 8 or 16')
+
+        if value_length is None:
+            value_length = length
+
+        if value_length < length:
+           register_value = self._read_register(register, length=length)
+           value = self._set_bit_value(register_value, value, value_length, start)
+
+        if length == 8:
+            reg_value = self.bus.write_byte_data(self.address, register, value)
+        elif length == 16:
+            reg_value = self.bus.write_word_data(self.address, register, value)
+
+        #if reg_bits == 16:
+        #    msb = (value >> 8) & 0xFF
+        #    lsb = value & 0xFF
+        #    data = (msb << 8) | lsb
+        #    self.bus.write_word_data(self.address, reg_address, data)
+        #elif reg_bits == 8:
+        #    self.bus.write_byte_data(self.address, reg_address, value)
+        #else:
+        #    raise ValueError('Invalid reg_bits value, only 8 and 16 are supported')
+
+    def _bit_mask(self, length):
+        return (1 << length) - 1
+
+    def _set_bit_value(self, register_value, new_value, new_value_length, start=0):
+        register_length = 16 if register_value > 0xFF else 8
+
+        if start + new_value_length > register_length:
+            raise ValueError('Value too large for register at specified position')
+
+        mask = self._bit_mask(new_value_length) << start
+        new_reg_value = (register_value & ~mask) | ((new_value << start) & mask) 
         
     def close(self):
         '''Close the I2C bus connection.'''
@@ -897,21 +958,34 @@ class BQ25798:
 
     def get_minimum_system_voltage(self):
         '''Get minimum system voltage.
-        
+
         Returns:
             float: Minimum system voltage in volts
         '''
-        reg_value = self._read_register(self.REG_MIN_SYS_VOLTAGE, reg_bits=16)
-        return reg_value * 0.016 # scale 16mV per bit to volts
+        register_value = self._read_register(self.REG_MIN_SYS_VOLTAGE, length=8, end=6) # first 6 bits
+        voltage_mv = 2500 + (reg_value * 250)  # 2500mV offset, 250mV per bit
+        return voltage_mv / 1000 # millivolts to volts
     
     def set_minimum_system_voltage(self, voltage_v):
         '''Set minimum system voltage.
         
+        Range: 2.5 to 16V
+
+        Set at power-on-reset according to the number of battery cells specified by the resistance on the PROG pin:
+        1s: 3.5V
+        2s: 7V
+        3s: 9V
+        4s: 12V
+
         Args:
             voltage_v (float): Minimum system voltage in volts
         '''
-        voltage_mv = int(voltage_v * 1000)
-        min_sys_reg = voltage_mv // 16 # scale volts to 16mV per bit
-        self._write_register(self.REG_MIN_SYS_VOLTAGE, min_sys_reg)
+        voltage_mv = int(voltage_v * 1000) - 2500 # volts to millivolts, 2500mV offset
+        new_value = voltage_mv // 250 # 250mV per bit
+
+        register_value = self._read_register(self.REG_MIN_SYS_VOLTAGE, length=8)
+        new_register_value = self._set_bit_value(register_value, new_value)
+
+        self._write_register(self.REG_MIN_SYS_VOLTAGE, new_register_value, length=8)
         logging.info(f'Minimum system voltage set to {voltage_v}V')
     
