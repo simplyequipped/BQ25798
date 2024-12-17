@@ -131,16 +131,21 @@ class BQ25798:
     '''State-of-charge (SoC) curve reference points for supported battery chemistries, used for estimating battery percentage.'''
     
     # battery states
-    BAT_STATE_DISCHARGING = 'discharging'
-    BAT_STATE_CHARGING    = 'charging'
-    BAT_STATE_CHARGED     = 'charged'
-    BAT_STATES = [BAT_STATE_DISCHARGING, BAT_STATE_CHARGING, BAT_STATE_CHARGED]
+    BAT_STATE_NOT_CHARGING = 'not charging'
+    BAT_STATE_TRICKLE_CHARGE = 'trickle charge'
+    BAT_STATE_PRECHARGE = 'precharge'
+    BAT_STATE_FAST_CHARGE = 'fast charge'
+    BAT_STATE_TAPER_CHARGE = 'taper charge'
+    BAT_STATE_TOP_OFF_TIMER = 'top-off timer charging'
+    BAT_STATE_CHARGED = 'charged'
+    BAT_STATES = [BAT_STATE_NOT_CHARGING, BAT_STATE_TRICKLE_CHARGE, BAT_STATE_PRECHARGE, BAT_STATE_FAST_CHARGE, BAT_STATE_TAPER_CHARGE, BAT_STATE_TOP_OFF_TIMER, BAT_STATE_CHARGED]
     
     # ADC modes
     ADC_MODE_ONE_SHOT     = 'one-shot'
     ADC_MODE_CONTINUOUS   = 'continuous'
     ADC_MODES = [ADC_MODE_ONE_SHOT, ADC_MODE_CONTINUOUS]
-    
+
+    # faults
     FAULT_INPUT_OVER_VOLTAGE  = 'input over-voltage fault'
     FAULT_INPUT_UNDER_VOLTAGE = 'input under-voltage fault'
     FAULT_INPUT_OVER_CURRENT  = 'input over-current fault'
@@ -341,7 +346,7 @@ class BQ25798:
                     if self.fault_change_callback is not None:
                         self.fault_change_callback(fault, current_status)
         
-    def _read_register(self, register, register_length=8, start=None, end=None):
+    def _read_register(self, register, register_length, start=None, end=None):
         '''Read register value.
 
         
@@ -349,7 +354,7 @@ class BQ25798:
 
         Args:
             register (int): Register address to read (example: 0x20)
-            register_length (int): Register length, defaults to 8
+            register_length (int): Register size (number of bits), should be 8 or 16
             start (int): First bit for desired value, defaults to 0
             end (int): Last bit position for desired value, defaults to *register_length*-1
         
@@ -381,19 +386,8 @@ class BQ25798:
             value = value & self._bit_mask(value_length)
 
         return value
-
-        #if reg_bits == 16:
-        #    data = self.bus.read_word_data(self.address, reg_address)
-        #    msb = (data >> 8) & 0xFF
-        #    lsb = data & 0xFF
-        #    value = (msb << 8) | lsb
-        #    return value
-        #elif reg_bits == 8:
-        #    return self.bus.read_byte_data(self.address, reg_address)
-        #else:
-        #    raise ValueError('Invalid reg_bits value, only 8 and 16 are supported')
         
-    def _write_register(self, register, value, register_length=None, value_length=None, start=0):
+    def _write_register(self, register, value, register_length, value_length=None, start=0):
         '''Write register value
 
         Use *value_length* to indicate a value less than the full register length. *register_length* and *start* should be specified to indicate the size of the register and the starting bit for the value in the register. A typical use case is setting bits in a configuration register.
@@ -403,23 +397,13 @@ class BQ25798:
         Args:
             register (int): Register address to write to (example: 0x20)
             value (int): Value to write to register
-            register_length (int): Register size (number of bits), defaults to 8 or 16 based on length of *value*
+            register_length (int): Register size (number of bits), should be 8 or 16
             value_length (int, None): Number of bits to write, defaults to *register_length*
             start (int): First bit position to write value, defaults to 0
         
         Raises:
             ValueError: Register length must be 8 or 16
         '''
-        #if length == 8:
-        #    reg_value = self._read_register(register, length=8)
-        #elif length == 16:
-        #    reg_value = self._read_register(register, length=16)
-        if register_length is None:
-            if register_value > 0xFF:
-                register_length = 16
-            else:
-                register_length = 8
-
         if register_length not in (8, 16):
             raise ValueError('Register length must be 8 or 16')
 
@@ -429,22 +413,12 @@ class BQ25798:
         if value_length < register_length:
             # set subset of bits
             register_value = self._read_register(register, register_length=register_length)
-            value = self._set_bit_value(register_value, value, value_length, start)
+            value = self._set_bit_value(register_value, value, register_length, value_length, start)
 
         if register_length == 8:
             reg_value = self.bus.write_byte_data(self.address, register, value) # write 8 bits
         elif register_length == 16:
             reg_value = self.bus.write_word_data(self.address, register, value) # write 16 bits
-
-        #if reg_bits == 16:
-        #    msb = (value >> 8) & 0xFF
-        #    lsb = value & 0xFF
-        #    data = (msb << 8) | lsb
-        #    self.bus.write_word_data(self.address, reg_address, data)
-        #elif reg_bits == 8:
-        #    self.bus.write_byte_data(self.address, reg_address, value)
-        #else:
-        #    raise ValueError('Invalid reg_bits value, only 8 and 16 are supported')
 
     def _bit_mask(self, length):
         '''Generate a bit mask of specified length.
@@ -457,33 +431,28 @@ class BQ25798:
         '''
         return (1 << length) - 1
 
-    def _set_bit_value(self, register_value, new_value, new_value_length, start=0):
+    def _set_bit_value(self, register_value, new_value, register_length, new_value_length, start=0):
         '''Set subset of bits.
-
-        *new_value_length* is required becase *new_value*.bit_length() does not include leading zeros.
         
         *start* bit position is zero-based. For example, when writting the last bit in an 8-bit register, *start* = 7.
 
         Args:
             register_value (int): Complete value of register to update
             new_value (int): Value of bit(s) to update in register value
+            register_length (int): Register size (number of bits), should be 8 or 16
             new_value_length (int): Number of bits in *new_value*
             start (int): First bit position to write *new_value*, defaults to 0
 
         Raises:
             ValueError: Value too large for register at specified position
         '''
-        if register_value > 0xFF:
-            register_length = 16
-        else:
-            register_length = 8
-
         if start + new_value_length > register_length:
             raise ValueError('Value too large for register at specified position')
 
         mask = self._bit_mask(new_value_length) << start
         new_reg_value = (register_value & ~mask) | ((new_value << start) & mask) 
-        
+        return new_reg_value
+    
     def close(self):
         '''Close the I2C bus connection.'''
         if self.bus:
@@ -493,13 +462,21 @@ class BQ25798:
     
     ### ADC Functions ###
     def enable_adc(self):
-        '''Set ADC enable bit.'''
+        '''Set ADC enable bit.
+
+        Reset by: power-on-reset, watchdog
+        Reset to: disabled
+        '''
         # write 0x01 to bit 7 of the ADC control register
         self._write_register(self.REG_ADC_CTRL, 0x01, register_length=8, value_length=1, start=7)
         logging.info('ADC enabled')
         
     def disable_adc(self):
-        '''Clear ADC enable bit.'''
+        '''Clear ADC enable bit.
+
+        Reset by: power-on-reset, watchdog
+        Reset to: disabled
+        '''
         # write 0x00 to bit 7 of the ADC control register
         self._write_register(self.REG_ADC_CTRL, 0x00, register_length=8, value_length=1, start=7)
         logging.info('ADC disabled')
@@ -514,14 +491,22 @@ class BQ25798:
         return bool(self._read_register(self.REG_ADC_CTRL, register_length=8, start=7, end=7))
         
     def set_adc_one_shot_mode(self):
-        '''Set ADC to one-shot mode.'''
+        '''Set ADC to one-shot mode.
+
+        Reset by: power-on-reset
+        Reset to: continuous mode
+        '''
         # write 0x01 to bit 6 of the ADC control register
         self._write_register(self.REG_ADC_CTRL, 0x01, register_length=8, value_length=1, start=6)
         self.adc_mode = self.ADC_MODE_ONE_SHOT
         logging.info('ADC in one-shot mode')
         
     def set_adc_continuous_mode(self):
-        '''Set the ADC to continuous mode.'''
+        '''Set the ADC to continuous mode.
+
+        Reset by: power-on-reset
+        Reset to: continuous mode
+        '''
         # write 0x00 to bit 6 of the ADC control register
         self._write_register(self.REG_ADC_CTRL, 0x00, register_length=8, value_length=1, start=6)
         self.adc_mode = self.ADC_MODE_CONTINUOUS
@@ -571,13 +556,21 @@ class BQ25798:
     
     ### Solar MPPT Input ###
     def enable_mppt(self):
-        '''Set MPPT (Maximum Power Point Tracking) enable bit.'''
+        '''Set MPPT (Maximum Power Point Tracking) enable bit.
+
+        Reset by: power-on-reset
+        Reset to: disabled
+        '''
         # write 0x01 to bit 0 of the MPPT control register
         self._write_register(self.REG_MPPT_CTRL, 0x01, register_length=8, value_length=1, start=0, end=0)
         logging.info(f'MPPT enabled')
         
     def disable_mppt(self):
-        '''Clear MPPT (Maximum Power Point Tracking) enable bit.'''
+        '''Clear MPPT (Maximum Power Point Tracking) enable bit.
+
+        Reset by: power-on-reset
+        Reset to: disabled
+        '''
         # write 0x00 to bit 0 of the MPPT control register
         self._write_register(self.REG_MPPT_CTRL, 0x00, register_length=8, value_length=1, start=0, end=0)
         logging.info('MPPT disabled')
@@ -613,7 +606,7 @@ class BQ25798:
         Args:
             voltage_v (float): Battery charge voltage in volts
         '''
-        voltage_reg = int(voltage_v * 100) # convert V to mV, 10mV per bit
+        voltage_reg = int((voltage_v * 1000) / 10) # convert V to mV, 10mV per bit
         self._write_register(self.REG_CHARGE_VOLTAGE, voltage_reg, register_length=16)
         self.charge_voltage = voltage_v
         logging.info(f'Battery charge voltage set to {voltage_v}V')
@@ -638,20 +631,28 @@ class BQ25798:
         Args:
             current_a (float): Battery charge current in amps
         '''
-        current_reg = int(current_a * 100) # convert A to mA, 10mA per bit
+        current_reg = int((current_a * 1000) / 10) # convert A to mA, 10mA per bit
         self._write_register(self.REG_CHARGE_CURRENT, current_reg, register_length=16)
         self.charge_current = current_a
         logging.info(f'Battery charge current set to {current_a}A')
         
     def enable_charging(self):
-        '''Enable battery charging.'''
-        # write 0x01 to bit 5 of the charge control register 0
+        '''Enable battery charging.
+
+        Reset by: power-on-reset, watchdog
+        Reset to: enabled
+        '''
+        # write 0x01 to bit 5 of charge control register 0
         self._write_register(self.REG_CHARGE_CTRL_0, 0x01, register_length=8, value_length=1, start=5, end=5)
         logging.info('Battery charging enabled')
         
     def disable_charging(self):
-        '''Disable battery charging.'''
-        # write 0x00 to bit 5 of the charge control register 0
+        '''Disable battery charging.
+
+        Reset by: power-on-reset, watchdog
+        Reset to: enabled
+        '''
+        # write 0x00 to bit 5 of charge control register 0
         self._write_register(self.REG_CHARGE_CTRL_0, 0x00, register_length=8, value_length=1, start=5, end=5)
         logging.info('Battery charging disabled')
         
@@ -661,14 +662,16 @@ class BQ25798:
         Returns:
             bool: True if charging is enabled, False otherwise
         '''
-        # read bit 5 of the charge control register 0
+        # read bit 5 of charge control register 0
         return bool(self._read_register(self.REG_CHARGE_CTRL_0, register_length=8, start=5, end=5))
 
     #TODO
-    # - check IBAT 
+    # - check IBAT sign handling
     def battery_charging(self):
+        '''Whether battery is currently being charged.'''
         return bool(self.charging_enabled() and self.ibat > 0)
-        
+
+    #TODO remove, should be managed by a fuel gauge ic
     def battery_percentage(self):
         '''Estimate battery percentage based on voltage.
         
@@ -708,32 +711,29 @@ class BQ25798:
             return 0
         if cell_voltage > soc_points[-1][0]:
             return 100
-        
+
+    
     def battery_charge_stage(self):
-        ''' Get battery charge stage.
-        
-        Charge stages:
-        - 'pre-charge'
-        - 'constant current'
-        - 'constant voltage'
-        - *None* (if not charging)
+        ''' Get current battery charge stage.
         
         Returns:
-            str or None: Battery charge stage, or None if not charging
+            str: One of BQ25798.BAT_STATE_*
         '''
-        # determine charging stage based on battery voltage
-        stage = None
+        charge_stage_map = {
+            0x0: BAT_STATE_NOT_CHARGING,
+            0x1: BAT_STATE_TRICKLE_CHARGE,
+            0x2: BAT_STATE_PRECHARGE,
+            0x3: BAT_STATE_FAST_CHARGE,
+            0x4: BAT_STATE_TAPER_CHARGE,
+            0x6: BAT_STATE_TOP_OFF_TIMER,
+            0x7: BAT_STATE_CHARGED
+        }
         
-        if self.battery_charging():
-            if self.vbat < self.charge_voltage * 0.7:
-                stage = 'pre-charge'
-            elif self.vbat < self.charge_voltage * 0.95:
-                stage = 'constant current'
-            else: 
-                stage = 'constant voltage'
-        
-        return stage
+        # read bits 5-7 of charge status register 1
+        charge_stage = self._read_register(self.REG_CHARGE_STATUS_1, register_length=8, start=5, end=7)
+        return charge_stage_map[charge_stage]
 
+    #TODO remove, should be managed by a fuel gauge ic
     def battery_charge_time_remaining(self):
         '''Estimate battery charge time remaining.
         
@@ -756,49 +756,7 @@ class BQ25798:
                 return 0
         else:
             return None
-        
-    def get_precharge_timeout(self):
-        '''Get configured battery precharge safety timeout.
-        
-        Returns:
-            int: Precharge timeout in minutes
-        '''
-        reg_value = self._read_register(self.REG_TIMER_CONTROL, reg_bits=8)
-        return (reg_value & 0x0F) * 10 # lower 4 bits scaled from 10 minute increments
-        
-    def set_precharge_timeout(self, precharge_timeout=30):
-        '''Set battery precharge safety timeout.
-        
-        Args:
-            precharge_timeout (int): Precharge timeout in minutes
-        '''
-        precharge_val = min(max(precharge_timeout, 0), 60) // 10
-        reg_value = self._read_register(self.REG_TIMER_CONTROL, reg_bits=8)
-        reg_value = (reg_value & 0xF0) | precharge_val # update lower 4 bits
-        self._write_register(self.REG_TIMER_CONTROL, reg_value, reg_bits=8)
-        logging.info(f'Precharge timeout set to {precharge_timeout} minutes')
-        
-    def get_fast_charge_timeout(self):
-        '''Get configured battery fast charge safety timeout.
-        
-        Returns:
-            int: Fast charge timeout in minutes
-        '''
-        reg_value = self._read_register(self.REG_TIMER_CONTROL, reg_bits=8)
-        return ((reg_value >> 4) & 0x0F) * 40 # upper 4 bits scaled from 40 minute increments
-        
-    def set_fast_charge_timeout(self, fast_charge_timeout=180):
-        '''Set battery fast charge safety timeout.
-        
-        Args:
-            fast_charge_timeout (int): Fast charge timeout in minutes
-        '''
-        fastcharge_val = min(max(fast_charge_timeout, 0), 320) // 40
-        reg_value = self._read_register(self.REG_TIMER_CONTROL, reg_bits=8)
-        reg_value = (reg_value & 0x0F) | (fastcharge_val << 4) # update upper 4 bits
-        self._write_register(self.REG_TIMER_CONTROL, reg_value, reg_bits=8)
-        logging.info(f'Fast charge timeout set to {fast_charge_timeout} minutes')
-        
+            
     
     ### USB Sourcing ###
     def get_usb_sourcing_voltage(self):
@@ -807,19 +765,22 @@ class BQ25798:
         Returns:
             float: USB-C sourcing voltage in volts
         '''
-        voltage_reg = self._read_register(self.REG_USB_SOURCE_VOLTAGE)
-        usb_voltage = voltage_reg * 0.016 # scale 16mV per bit to volts
-        return usb_voltage
+        return ((self._read_register(self.REG_USB_SOURCE_VOLTAGE, register_length=16) + 2800) * 10) / 1000 # 2800mV offset, 10mV per bit, convert mV to V
 
     def set_usb_sourcing_voltage(self, voltage_v):
         '''Set USB-C sourcing voltage.
+
+        Reset by: power-on-reset, watchdog
+        Reset to: 5V
+
+        Range: 3 - 18.8V
+        Bit step size: 10mV
         
         Args:
             voltage_v (float): USB-C sourcing voltage in volts
         '''
-        voltage_mv = int(voltage_v * 1000) # convert to mV
-        voltage_reg = int(voltage_mv / 16) # LSB is 16mV per bit
-        self._write_register(self.REG_USB_SOURCE_VOLTAGE, voltage_reg)
+        voltage_reg = int((voltage_v * 1000 - 2800) / 10) # convert V to mV, 2800mV offset, 10mV per bit
+        self._write_register(self.REG_USB_SOURCE_VOLTAGE, voltage_reg, register_length=16, value_length=10, start=0)
         logging.info(f'USB sourcing voltage set to {voltage_v}V')
 
     def get_usb_sourcing_current(self):
@@ -828,21 +789,25 @@ class BQ25798:
         Returns:
             float: USB-C sourcing current in amps
         '''
-        current_reg = self._read_register(self.REG_USB_SOURCE_CURRENT)
-        usb_current = current_reg * 0.05 # scale 50mA per bit to amps
-        return usb_current
+        return (self._read_register(self.REG_CHARGE_CURRENT, register_length=16) * 40) / 1000 # 40mA per bit, convert mA to A
         
     def set_usb_sourcing_current(self, current_a):
         '''Set USB-C sourcing current.
+
+        Reset by: power-on-reset, watchdog
+        Reset to: 3.04A
+
+        Range: 0.160 - 3.36A
+        Bit step size: 40mA
         
         Args:
             current_a (float): USB-C sourcing current in amps
         '''
-        current_ma = int(current_a * 1000) # convert to mA
-        current_reg = int(current_ma / 50) # LSB is 50mA per bit
-        self._write_register(self.REG_USB_SOURCE_CURRENT, current_reg)
+        current_reg = int((current_a * 1000) / 40) # convert A to mA, 40mV per bit
+        self._write_register(self.REG_USB_SOURCE_CURRENT, current_reg, register_length=8, value_length=7, start=0)
         logging.info(f'USB sourcing current set to {current_a}A')
-        
+
+    #TODO pick up here
     def enable_usb_sourcing(self, port=1):
         '''Enable USB-C sourcing on specified input port.
         
