@@ -21,31 +21,64 @@ logger.addHandler(handler)
 
 
 class BQ25798:
-    # configuration and control registers
-    REG_MIN_SYS_VOLTAGE = 0x00     # minimum system voltage control register
-    REG_CHARGE_VOLTAGE = 0x01      # charge voltage control register
-    REG_CHARGE_CURRENT = 0x03      # charge current control register
-    REG_PRECHARGE_CURRENT = 0x06   # pre-charge and termination current control register
-    REG_ADC_CTRL = 0x2E            # ADC control register
-    REG_USB_SOURCE_VOLTAGE = 0x16  # USB-C sourcing voltage register
-    REG_USB_SOURCE_CURRENT = 0x18  # USB-C sourcing current register
-    REG_USB_SOURCE_CTRL = 0x19     # USB-C source control register
-    REG_OTG_CONFIG = 0x09          # OTG and ship mode control register
-    REG_MPPT_CTRL = 0x1A           # mppt control register
-    REG_INPUT_SOURCE_CTRL = 0x1B   # input source control register
-    REG_TIMER_CONTROL = 0x12       # safety timer and watchdog control register
-    REG_FAULT_STATUS = 0x20        # fault status register
-    REG_PROTECTION_CTRL = 0x1C     # protection control register
-    # ADC reading registers
-    REG_ADC_IBUS = 0x31            # input current ADC result register
-    REG_ADC_IBAT = 0x33            # battery charge/discharge current ADC result register
-    REG_ADC_VBUS = 0x35            # input voltage ADC result register
-    REG_ADC_VAC1 = 0x37            # port 1 voltage ADC result register
-    REG_ADC_VAC2 = 0x38            # port 2 voltage ADC result register
-    REG_ADC_VBAT = 0x3B            # battery voltage ADC result register
-    REG_ADC_VSYS = 0x3D            # system voltage ADC result register
-    REG_ADC_TS = 0x3F              # external temperature sensor ADC result register
-    REG_ADC_TDIE = 0x41            # die temperature ADC result register
+    # I2C registers
+    REG_MIN_SYS_VOLTAGE = 0x00     # minimum system voltage
+    REG_CHARGE_VOLTAGE = 0x01      # charge voltage control
+    REG_CHARGE_CURRENT = 0x03      # charge current control
+    REG_INPUT_VOLTAGE_LIMIT = 0x05 # input voltage limit
+    REG_INPUT_CURRENT_LIMIT = 0x06 # input current limit
+    REG_PRECHARGE_CTRL = 0x08      # pre-charge control
+    REG_TERMINATION_CTRL = 0x09    # charge termination control
+    REG_RECHARGE_CTRL = 0x0A       # re-charge control
+    REG_USB_SOURCE_VOLTAGE = 0x0B  # USB-C sourcing voltage
+    REG_USB_SOURCE_CURRENT = 0x0D  # USB-C sourcing current
+    REG_TIMER_CONTROL = 0x0E       # safety timer and watchdog control
+    REG_CHARGE_CTRL_0 = 0x0F       # charger control
+    REG_CHARGE_CTRL_1 = 0x10       # charger control
+    REG_CHARGE_CTRL_2 = 0x11       # charger control
+    REG_CHARGE_CTRL_3 = 0x12       # charger control
+    REG_CHARGE_CTRL_4 = 0x13       # charger control
+    REG_CHARGE_CTRL_5 = 0x14       # charger control
+    REG_MPPT_CTRL = 0x15           # MPPT control
+    REG_TEMPERATURE_CTRL = 0x16    # temperature control
+    REG_NTC_CTRL_0 = 0x17          # NTC control
+    REG_NTC_CTRL_1 = 0x18          # NTC control
+    REG_ICO_CURRENT_LIMIT = 0x19   # input current limit (from ICO or ILIM_HIZ pin)
+    REG_CHARGE_STATUS_0 = 0x1B     # charger status
+    REG_CHARGE_STATUS_1 = 0x1C     # charger status
+    REG_CHARGE_STATUS_2 = 0x1D     # charger status
+    REG_CHARGE_STATUS_3 = 0x1E     # charger status
+    REG_CHARGE_STATUS_4 = 0x1F     # charger status
+    REG_FAULT_STATUS_0 = 0x20      # fault status
+    REG_FAULT_STATUS_1 = 0x21      # fault status
+    REG_CHARGE_FLAG_0 = 0x22       # charger flag
+    REG_CHARGE_FLAG_1 = 0x23       # charger flag
+    REG_CHARGE_FLAG_2 = 0x24       # charger flag
+    REG_CHARGE_FLAG_3 = 0x25       # charger flag
+    REG_FAULT_FLAG_0 = 0x26        # fault flag
+    REG_FAULT_FLAG_1 = 0x27        # fault flag
+    REG_CHARGE_MASK_0 = 0x28       # charger flag
+    REG_CHARGE_MASK_1 = 0x29       # charger flag
+    REG_CHARGE_MASK_2 = 0x2A       # charger flag
+    REG_CHARGE_MASK_3 = 0x2B       # charger flag
+    REG_FAULT_MASK_0 = 0x2C        # fault flag
+    REG_FAULT_MASK_1 = 0x2D        # fault flag
+    REG_ADC_CTRL = 0x2E            # ADC control
+    REG_ADC_FUNCTION_DISABLE_0 = 0x2F # ADC function disable
+    REG_ADC_FUNCTION_DISABLE_1 = 0x30 # ADC function disable
+    REG_ADC_IBUS = 0x31            # input current ADC result
+    REG_ADC_IBAT = 0x33            # battery charge/discharge current ADC result
+    REG_ADC_VBUS = 0x35            # input voltage ADC result
+    REG_ADC_VAC1 = 0x37            # port 1 voltage ADC result
+    REG_ADC_VAC2 = 0x39            # port 2 voltage ADC result
+    REG_ADC_VBAT = 0x3B            # battery voltage ADC result
+    REG_ADC_VSYS = 0x3D            # system voltage ADC result
+    REG_ADC_TS = 0x3F              # external temperature sensor ADC result
+    REG_ADC_TDIE = 0x41            # die temperature ADC result
+    REG_ADC_DP = 0x43              # USB data plus ADC result
+    REG_ADC_DM = 0x45              # USB data minus ADC result
+    REG_DPDM_DRIVER = 0x47         # DPDM driver
+    REG_PART_INFO = 0x48           # part information
     
     # battery chemistry
     BAT_CHEMISTRY_LIFEPO4 = 'LiFePo4'
@@ -203,6 +236,10 @@ class BQ25798:
         '''Battery (aka external) temperature ADC reading in °C'''
         self.tdie = 0.0
         '''BQ25798 die temperature ADC reading in °C'''
+        self.dp = 0.0
+        '''USB data plus reading in volts'''
+        self.dm = 0.0
+        '''USB data minus reading in volts'''
         
         # initalize fault status variables
         self.input_over_voltage_fault = False
@@ -304,14 +341,17 @@ class BQ25798:
                     if self.fault_change_callback is not None:
                         self.fault_change_callback(fault, current_status)
         
-    def _read_register(self, register, length=8, start=None, end=None):
+    def _read_register(self, register, register_length=8, start=None, end=None):
         '''Read register value.
+
+        
+        *start* and *end* bit positions are zero-based. For example, when reading the last bit in an 8-bit register, *start* = 7.
 
         Args:
             register (int): Register address to read (example: 0x20)
-            length (int): Register length, defaults to 8
+            register_length (int): Register length, defaults to 8
             start (int): First bit for desired value, defaults to 0
-            end (int): Last bit for desired value, defaults to *length*-1
+            end (int): Last bit position for desired value, defaults to *register_length*-1
         
         Returns:
             bytes: Register value
@@ -319,7 +359,7 @@ class BQ25798:
         Raises:
             ValueError: Register length must be 8 or 16
         '''
-        if length not in (8, 16):
+        if register_length not in (8, 16):
             raise ValueError('Register length must be 8 or 16')
 
         if start is None:
@@ -328,15 +368,15 @@ class BQ25798:
         if end is None:
             end = length - 1
 
-        if length == 8:
+        if register_length == 8:
             value = self.bus.read_byte_data(self.address, register) # read 8 bits
-        elif length == 16:
+        elif register_length == 16:
             value = self.bus.read_word_data(self.address, register) # read 16 bits
 
         if start > 0:
             value = (value >> start)
 
-        if end < (length - 1):
+        if end < (register_length - 1):
             value_length = end - start + 1
             value = value & self._bit_mask(value_length)
 
@@ -353,16 +393,19 @@ class BQ25798:
         #else:
         #    raise ValueError('Invalid reg_bits value, only 8 and 16 are supported')
         
-    def _write_register(self, register, value, length=8, value_length=None, start=0):
+    def _write_register(self, register, value, register_length=None, value_length=None, start=0):
         '''Write register value
 
-        Use *value_length* to indicate a value less than the full register length. User *start* to indicate the starting bit for the value in the register. A typical use case is setting bits in a configuration register.
+        Use *value_length* to indicate a value less than the full register length. *register_length* and *start* should be specified to indicate the size of the register and the starting bit for the value in the register. A typical use case is setting bits in a configuration register.
+
+        *start* bit position is zero-based. For example, when writting the last bit in an 8-bit register, *start* = 7.
         
         Args:
-            register (int): Register address to write (example: 0x20)
-            length (int): Register length, defaults to 8
-            value_length (int, None): Number of bits to write, defaults to *length*
-            start (in): First bit to write value, defaults to 0
+            register (int): Register address to write to (example: 0x20)
+            value (int): Value to write to register
+            register_length (int): Register size (number of bits), defaults to 8 or 16 based on length of *value*
+            value_length (int, None): Number of bits to write, defaults to *register_length*
+            start (int): First bit position to write value, defaults to 0
         
         Raises:
             ValueError: Register length must be 8 or 16
@@ -371,21 +414,27 @@ class BQ25798:
         #    reg_value = self._read_register(register, length=8)
         #elif length == 16:
         #    reg_value = self._read_register(register, length=16)
+        if register_length is None:
+            if register_value > 0xFF:
+                register_length = 16
+            else:
+                register_length = 8
 
-        if length not in (8, 16):
+        if register_length not in (8, 16):
             raise ValueError('Register length must be 8 or 16')
 
         if value_length is None:
-            value_length = length
+            value_length = register_length
 
-        if value_length < length:
-           register_value = self._read_register(register, length=length)
-           value = self._set_bit_value(register_value, value, value_length, start)
+        if value_length < register_length:
+            # set subset of bits
+            register_value = self._read_register(register, register_length=register_length)
+            value = self._set_bit_value(register_value, value, value_length, start)
 
-        if length == 8:
-            reg_value = self.bus.write_byte_data(self.address, register, value)
-        elif length == 16:
-            reg_value = self.bus.write_word_data(self.address, register, value)
+        if register_length == 8:
+            reg_value = self.bus.write_byte_data(self.address, register, value) # write 8 bits
+        elif register_length == 16:
+            reg_value = self.bus.write_word_data(self.address, register, value) # write 16 bits
 
         #if reg_bits == 16:
         #    msb = (value >> 8) & 0xFF
@@ -398,10 +447,36 @@ class BQ25798:
         #    raise ValueError('Invalid reg_bits value, only 8 and 16 are supported')
 
     def _bit_mask(self, length):
+        '''Generate a bit mask of specified length.
+
+        Args:
+            length (int): Number of bits in bit mask
+
+        Returns:
+            int: bit mask of specified length
+        '''
         return (1 << length) - 1
 
     def _set_bit_value(self, register_value, new_value, new_value_length, start=0):
-        register_length = 16 if register_value > 0xFF else 8
+        '''Set subset of bits.
+
+        *new_value_length* is required becase *new_value*.bit_length() does not include leading zeros.
+        
+        *start* bit position is zero-based. For example, when writting the last bit in an 8-bit register, *start* = 7.
+
+        Args:
+            register_value (int): Complete value of register to update
+            new_value (int): Value of bit(s) to update in register value
+            new_value_length (int): Number of bits in *new_value*
+            start (int): First bit position to write *new_value*, defaults to 0
+
+        Raises:
+            ValueError: Value too large for register at specified position
+        '''
+        if register_value > 0xFF:
+            register_length = 16
+        else:
+            register_length = 8
 
         if start + new_value_length > register_length:
             raise ValueError('Value too large for register at specified position')
@@ -419,16 +494,14 @@ class BQ25798:
     ### ADC Functions ###
     def enable_adc(self):
         '''Set ADC enable bit.'''
-        reg_value = self._read_register(self.REG_ADC_CTRL)
-        reg_value |= (1 << 0) # set enable bit
-        self._write_register(self.REG_ADC_CTRL, reg_value)
+        # write 0x01 to bit 7 of the ADC control register
+        self._write_register(self.REG_ADC_CTRL, 0x01, register_length=8, value_length=1, start=7)
         logging.info('ADC enabled')
         
     def disable_adc(self):
         '''Clear ADC enable bit.'''
-        reg_value = self._read_register(self.REG_ADC_CTRL)
-        reg_value &= ~(1 << 0) # clear enable bit
-        self._write_register(self.REG_ADC_CTRL, reg_value)
+        # write 0x00 to bit 7 of the ADC control register
+        self._write_register(self.REG_ADC_CTRL, 0x00, register_length=8, value_length=1, start=7)
         logging.info('ADC disabled')
         
     def adc_enabled(self):
@@ -437,23 +510,20 @@ class BQ25798:
         Returns:
             bool: True if ADC is enabled, False otherwise
         '''
-        reg_value = self._read_register(self.REG_ADC_CTRL, reg_bits=8)
-        return bool(reg_value & (1 << 0)) # enable bit to boolean
+        # read bit 7 of the ADC control register
+        return bool(self._read_register(self.REG_ADC_CTRL, register_length=8, start=7, end=7))
         
     def set_adc_one_shot_mode(self):
         '''Set ADC to one-shot mode.'''
-        reg_value = self._read_register(self.REG_ADC_CTRL)
-        reg_value |= (1 << 1) # Set ADC_ONE_SHOT bit
-        self._write_register(self.REG_ADC_CTRL, reg_value)
+        # write 0x01 to bit 6 of the ADC control register
+        self._write_register(self.REG_ADC_CTRL, 0x01, register_length=8, value_length=1, start=6)
         self.adc_mode = self.ADC_MODE_ONE_SHOT
         logging.info('ADC in one-shot mode')
         
     def set_adc_continuous_mode(self):
         '''Set the ADC to continuous mode.'''
-        reg_value = self._read_register(self.REG_ADC_CTRL, reg_bits=8)
-        reg_value &= ~(1 << 1) # clear the ADC_ONE_SHOT bit
-        reg_value |= (1 << 0) # set the ADC_EN bit
-        self._write_register(self.REG_ADC_CTRL, reg_value, reg_bits=8)
+        # write 0x00 to bit 6 of the ADC control register
+        self._write_register(self.REG_ADC_CTRL, 0x00, register_length=8, value_length=1, start=6)
         self.adc_mode = self.ADC_MODE_CONTINUOUS
         logging.info('ADC in continuous mode')
         
@@ -463,69 +533,53 @@ class BQ25798:
         Returns:
             str: *ADC_MODE_ONE_SHOT* or *ADC_MODE_CONTINUOUS*
         '''
-        reg_value = self._read_register(self.REG_ADC_CTRL, reg_bits=8)
-        if reg_value & (1 << 1): # check if ADC_ONE_SHOT bit is set
+        # read bit 6 of the ADC control register
+        register_value = self._read_register(self.REG_ADC_CTRL, register_length=8, start=6, end=6)
+        
+        if register_value == 1:
             return self.ADC_MODE_ONE_SHOT
         else:
             return self.ADC_MODE_CONTINUOUS
-        
+
+    #TODO
+    # - check IBAT ADC register sign bit handling
+    # - check TS ADC register value handling of % value throughout module
     def update_adc_readings(self):
         '''Update local ADC reading values.
         
-        If ADC is in one-shot mode the ADC is enabled before updating readings, and disabled after updates are complete.
+        If ADC is in one-shot mode, ADC is enabled before updating readings and then disabled after updates are complete.
         '''
         if self.adc_mode == self.ADC_MODE_ONE_SHOT:
             self.enable_adc()
-            time.sleep(0.1) # allow time for ADC to complete conversions
+            time.sleep(0.1) # allow time for ADC to complete conversions and settle
         
-        self.ibus = self._read_register(self.REG_ADC_IBUS) / 1000 # convert to A, 1mA per bit scaling factor
-        self.ibat = self._read_register(self.REG_ADC_IBAT) / 1000 # convert to A, 1mA per bit scaling factor
-        self.vbus = self._read_register(self.REG_ADC_VBUS) / 1000 # convert to V, 1mV per bit scaling factor
-        self.vac1 = self._read_register(self.REG_ADC_VAC1) / 1000 # convert to V, 1mV per bit scaling factor
-        self.vac2 = self._read_register(self.REG_ADC_VAC2) / 1000 # convert to V, 1mV per bit scaling factor
-        self.vbat = self._read_register(self.REG_ADC_VBAT) / 1000 # convert to V, 1mV per bit scaling factor
-        self.vsys = self._read_register(self.REG_ADC_VSYS) / 1000 # convert to V, 1mV per bit scaling factor
-        self.tbat = self._read_register(self.REG_ADC_TS) * 0.0976563 # 0.0976563% per bit scaling factor
-        self.tdie = self._read_register(self.REG_ADC_TDIE) * 0.5 # convert to °C, 0.5°C per bit scaling factor
+        self.ibus = self._read_register(self.REG_ADC_IBUS, register_length=16) / 1000 # convert to A, 1mA per bit
+        self.ibat = self._read_register(self.REG_ADC_IBAT, register_length=16) / 1000 # convert to A, 1mA per bit
+        self.vbus = self._read_register(self.REG_ADC_VBUS, register_length=16) / 1000 # convert to V, 1mV per bit
+        self.vac1 = self._read_register(self.REG_ADC_VAC1, register_length=16) / 1000 # convert to V, 1mV per bit
+        self.vac2 = self._read_register(self.REG_ADC_VAC2, register_length=16) / 1000 # convert to V, 1mV per bit
+        self.vbat = self._read_register(self.REG_ADC_VBAT, register_length=16) / 1000 # convert to V, 1mV per bit
+        self.vsys = self._read_register(self.REG_ADC_VSYS, register_length=16) / 1000 # convert to V, 1mV per bit
+        self.tbat = self._read_register(self.REG_ADC_TS,   register_length=16) * 0.0976563 # 0.0976563% per bit
+        self.tdie = self._read_register(self.REG_ADC_TDIE, register_length=16) * 0.5 # convert to °C, 0.5°C per bit
+        self.dp   = self._read_register(self.REG_ADC_DP,   register_length=16) / 1000 # convert to V, 1mV per bit
+        self.dm   = self._read_register(self.REG_ADC_DM,   register_length=16) / 1000 # convert to V, 1mV per bit
         
         if self.adc_mode == self.ADC_MODE_ONE_SHOT:
             self.disable_adc()
         
     
     ### Solar MPPT Input ###
-    def enable_mppt(self, port=2):
-        '''Enable MPPT (Maximum Power Point Tracking) for a specific port.
-        
-        Args:
-            port (int): Input port to enable MPPT for (1 or 2), defaults to 2
-        
-        Raises:
-            ValueError: Invalid port number, must be 1 or 2
-        '''
-        if port not in (1, 2):
-            raise ValueError('Invalid port number, must be 1 or 2')
-        
-        reg_value = self._read_register(self.REG_MPPT_CTRL)
-        
-        # if MPPT is already enabled on a different port, disable it first
-        current_port = (reg_value >> 1) & 0x01
-        if current_port != (port - 1):
-            reg_value &= ~(1 << 1) # clear MPPT_PORT bit
-            reg_value &= ~(1 << 0) # disable MPPT
-            self._write_register(self.REG_MPPT_CTRL, reg_value)
-        
-        # enable MPPT for specified port
-        reg_value |= (port - 1) << 1 # set MPPT_PORT bit
-        reg_value |= (1 << 0) # enable MPPT
-        self._write_register(self.REG_MPPT_CTRL, reg_value)
-        
-        logging.info(f'MPPT enabled on port {port}.')
+    def enable_mppt(self):
+        '''Set MPPT (Maximum Power Point Tracking) enable bit.'''
+        # write 0x01 to bit 0 of the MPPT control register
+        self._write_register(self.REG_MPPT_CTRL, 0x01, register_length=8, value_length=1, start=0, end=0)
+        logging.info(f'MPPT enabled')
         
     def disable_mppt(self):
-        '''Disable MPPT (Maximum Power Point Tracking).'''
-        reg_value = self._read_register(self.REG_MPPT_CTRL)
-        reg_value &= ~(1 << 0) # clear MPPT_EN bit
-        self._write_register(self.REG_MPPT_CTRL, reg_value)
+        '''Clear MPPT (Maximum Power Point Tracking) enable bit.'''
+        # write 0x00 to bit 0 of the MPPT control register
+        self._write_register(self.REG_MPPT_CTRL, 0x00, register_length=8, value_length=1, start=0, end=0)
         logging.info('MPPT disabled')
         
     def mppt_enabled(self):
@@ -534,44 +588,34 @@ class BQ25798:
         Returns:
             bool: True if MPPT is enabled, False otherwise
         '''
-        reg_value = self._read_register(self.REG_MPPT_CTRL, reg_bits=8)
-        return bool(reg_value & (1 << 0)) # check if the enable bit is set
-        
-    def get_mppt_port(self):
-        '''Get the input port configured for MPPT (Maximum Power Point Tracking).
-        
-        Returns:
-            int or None: Input port number (1 or 2) if configured, otherwise None
-        '''
-        reg_value = self._read_register(self.REG_MPPT_CTRL, reg_bits=8)
-        mppt_port_bit = (reg_value >> 1) & 0x01
-        mppt_port = mppt_port_bit + 1 if mppt_port_bit in (0,1) else None
-        return mppt_port
+        # read bit 1 of the MPPT control register
+        return bool(self._read_register(self.REG_MPPT_CTRL, register_length=8, start=0, end=0))
         
     
     ### Battery Charging ###
     def get_charge_voltage(self):
-        '''Get configured battery charging voltage.
+        '''Get configured battery charge voltage.
         
         Returns:
             float: Battery charge voltage in volts
         '''
-        voltage_reg = self._read_register(self.REG_CHARGE_VOLTAGE)
-        charge_voltage = voltage_reg * 16 / 1000 # scale 16mV per bit to volts
-        
-        return charge_voltage
+        return self._read_register(self.REG_CHARGE_VOLTAGE, register_length=16) / 100 # convert mV to V, 10mV per bit
         
     def set_charge_voltage(self, voltage_v):
-        '''Set battery charging voltage.
+        '''Set battery charge voltage.
+
+        Reset by: power-on-reset
+        Reset to: based on resistance at PROG pin
+
+        Range: 3 - 18.8V
+        Bit step size: 10mV
         
         Args:
             voltage_v (float): Battery charge voltage in volts
         '''
+        voltage_reg = int(voltage_v * 100) # convert V to mV, 10mV per bit
+        self._write_register(self.REG_CHARGE_VOLTAGE, voltage_reg, register_length=16)
         self.charge_voltage = voltage_v
-        
-        voltage_mv = int(voltage_v * 1000) # scale to mV
-        voltage_reg = voltage_mv // 16 # scale to 16mV per bit
-        self._write_register(self.REG_CHARGE_VOLTAGE, voltage_reg)
         logging.info(f'Battery charge voltage set to {voltage_v}V')
         
     def get_charge_current(self):
@@ -580,35 +624,35 @@ class BQ25798:
         Returns:
             float: Battery charge current in amps
         '''
-        current_reg = self._read_register(self.REG_CHARGE_CURRENT)
-        charge_current = current_reg * 64 / 1000 # scale 64mA per bit to amps
-        return charge_current
+        return self._read_register(self.REG_CHARGE_CURRENT, register_length=16) / 100 # convert mV to V, 10mV per bit
         
     def set_charge_current(self, current_a):
         '''Set battery charging current.
+
+        Reset by: power-on-reset, watchdog
+        Reset to: based on resistance at PROG pin
+
+        Range: 0.05 - 5 A
+        Bit step size: 10mA
         
         Args:
             current_a (float): Battery charge current in amps
         '''
+        current_reg = int(current_a * 100) # convert A to mA, 10mA per bit
+        self._write_register(self.REG_CHARGE_CURRENT, current_reg, register_length=16)
         self.charge_current = current_a
-        
-        current_ma = int(current_a * 1000) # scale to mA
-        current_reg = current_ma // 64 # scale to 64mA per bit
-        self._write_register(self.REG_CHARGE_CURRENT, current_reg)
         logging.info(f'Battery charge current set to {current_a}A')
         
     def enable_charging(self):
         '''Enable battery charging.'''
-        reg_value = self._read_register(self.REG_PROTECTION_CTRL)
-        reg_value |= (1 << 0) # set enable bit
-        self._write_register(self.REG_PROTECTION_CTRL, reg_value)
+        # write 0x01 to bit 5 of the charge control register 0
+        self._write_register(self.REG_CHARGE_CTRL_0, 0x01, register_length=8, value_length=1, start=5, end=5)
         logging.info('Battery charging enabled')
         
     def disable_charging(self):
         '''Disable battery charging.'''
-        reg_value = self._read_register(self.REG_PROTECTION_CTRL)
-        reg_value &= ~(1 << 0) # clear enable bit
-        self._write_register(self.REG_PROTECTION_CTRL, reg_value)
+        # write 0x00 to bit 5 of the charge control register 0
+        self._write_register(self.REG_CHARGE_CTRL_0, 0x00, register_length=8, value_length=1, start=5, end=5)
         logging.info('Battery charging disabled')
         
     def charging_enabled(self):
@@ -617,10 +661,12 @@ class BQ25798:
         Returns:
             bool: True if charging is enabled, False otherwise
         '''
-        reg_value = self._read_register(self.REG_PROTECTION_CTRL, reg_bits=8)
-        return bool(reg_value & (1 << 0)) # check if the enable bit is set
-        
-    def battery_charging(self): 
+        # read bit 5 of the charge control register 0
+        return bool(self._read_register(self.REG_CHARGE_CTRL_0, register_length=8, start=5, end=5))
+
+    #TODO
+    # - check IBAT 
+    def battery_charging(self):
         return bool(self.charging_enabled() and self.ibat > 0)
         
     def battery_percentage(self):
