@@ -804,107 +804,105 @@ class BQ25798:
             current_a (float): USB-C sourcing current in amps
         '''
         current_reg = int((current_a * 1000) / 40) # convert A to mA, 40mV per bit
+        # write current to bits 0-6 of USB source current register
         self._write_register(self.REG_USB_SOURCE_CURRENT, current_reg, register_length=8, value_length=7, start=0)
         logging.info(f'USB sourcing current set to {current_a}A')
 
-    #TODO pick up here
-    def enable_usb_sourcing(self, port=1):
-        '''Enable USB-C sourcing on specified input port.
+    def enable_usb_sourcing(self):
+        '''Enable USB-C sourcing (OTG).
         
-        Args:
-            port (int): Input port to enable sourcing on (1 or 2), defaults to 1
-        
-        Raises:
-            ValueError: Invalid port number, must be 1 or 2
+        Reset by: power-on-reset, watchdog
+        Reset to: disabled
         '''
-        if port not in [1, 2]:
-            raise ValueError('Invalid port number, must be 1 or 2')
-        
-        reg_value = self._read_register(self.REG_USB_SOURCE_CTRL)
-        
-        # if sourcing is already enabled on a different port, disable it first
-        current_port = (reg_value >> 1) & 0x01
-        if current_port != (port - 1):
-            reg_value &= ~(1 << 1) # clear SOURCE_PORT bit
-            reg_value &= ~(1 << 0) # clear enable bit
-            self._write_register(self.REG_USB_SOURCE_CTRL, reg_value)
-        
-        # enable sourcing on the specified port
-        reg_value |= (port - 1) << 1 # set SOURCE_PORT bit
-        reg_value |= (1 << 0) # set enable bit
-        self._write_register(self.REG_USB_SOURCE_CTRL, reg_value)
-        logging.info(f'USB sourcing enabled on port {port}')
+        # write 0x01 to bit 6 of charge control register 3
+        self._write_register(self.REG_CHARGE_CTRL_3, 0x01, register_length=8, value_length=1, start=6)
+        logging.info('USB sourcing enabled')
         
     def disable_usb_sourcing(self):
-        '''Disable USB-C sourcing.'''
-        reg_value = self._read_register(self.REG_USB_SOURCE_CTRL)
-        reg_value &= ~(1 << 0) # clear enable bit
-        self._write_register(self.REG_USB_SOURCE_CTRL, reg_value)
+        '''Disable USB-C sourcing (OTG).
+
+        Reset by: power-on-reset, watchdog
+        Reset to: disabled
+        '''
+        # write 0x00 to bit 6 of charge control register 3
+        self._write_register(self.REG_CHARGE_CTRL_3, 0x00, register_length=8, value_length=1, start=6)
         logging.info('USB sourcing disabled')
         
     def usb_sourcing_enabled(self):
-        '''Check if USB-C sourcing is enabled.
+        '''Whether USB-C sourcing (OTG) is enabled.
         
         Returns:
             bool: True if USB-C sourcing is enabled, False otherwise
         '''
-        reg_value = self._read_register(self.REG_USB_SOURCE_CTRL, reg_bits=8)
-        return bool(reg_value & (1 << 0)) # check if enable bit is set
+        # read bit 6 of charge control register 3
+        return bool(self._read_register(self.REG_CHARGE_CTRL_3, register_length=8, start=6, end=6))
         
-    def get_usb_sourcing_port(self):
-        '''Get the input port configured for USB-C sourcing.
-        
-        Returns:
-            int or None: Port number (1 or 2) if configured, otherwise None
-        '''
-        reg_value = self._read_register(self.REG_USB_SOURCE_CTRL, reg_bits=8)
-        sourcing_port_bit = (reg_value >> 1) & 0x01
-        sourcing_port = sourcing_port_bit + 1 if sourcing_port_bit in (0, 1) else None
-        return sourcing_port
-        
-    
+
     ### Ship and Shutdown Modes ###
-    def enable_ship_mode(self, delay_enabled=False):
+    def set_ship_fet_present(self, fet_present=True):
+        '''Set whether ship fet is present.
+
+        Args:
+            fet_present (bool): Whether ship FET is present (installed)
+        '''
+        reg_value = int(fet_present)
+        # write bit 7 in charge control register 5
+        self._write_register(self.REG_CHARGE_CTRL_5, reg_value, register_length=8, value_length=1, start=7)
+        logging.info(f'Ship FET {"present" if fet_present else "not present"}')
+
+    def enable_ship_mode(self, delay_enabled=True):
         '''Enable ship mode.
+
+        Reset by: power-on-reset
+        yyReset to: disabled
+
+        Delay on entering ship mode is enabled by default on power-on-reset.
         
         Args:
-            delay_enabled (bool): Whether to delay 10 seconds before entering ship mode, defaults to False
+            delay_enabled (bool): Whether to delay 10 seconds before entering ship mode, defaults to True
         '''
-        reg_value = self._read_register(self.REG_OTG_CONFIG)
-        
         if delay_enabled:
-            reg_value |= (1 << 6) # set SHIP_DLY_EN bit to enable 10-second delay
+            # write 0x00 to bit 0 in charge control register 2
+            self._write_register(self.REG_CHARGE_CTRL_2, 0x00, register_length=8, value_length=1, start=0)
         else:
-            reg_value &= ~(1 << 6) # clear SHIP_DLY_EN bit to disable 10-second delay
+            # write 0x01 to bit 0 in charge control register 2
+            self._write_register(self.REG_CHARGE_CTRL_2, 0x01, register_length=8, value_length=1, start=0)
         
-        reg_value |= (1 << 5) # set enable bit
-        self._write_register(self.REG_OTG_CONFIG, reg_value)
         logging.info(f'Entering ship mode{" after 10-second delay" if delay_enabled else ""}')
+        # write 0x02 to bits 1-2 in charge control register 2
+        self._write_register(self.REG_CHARGE_CTRL_2, 0x02, register_length=8, value_length=2, start=1)
         
     def disable_ship_mode(self):
-        '''disable ship mode.'''
-        reg_value = self._read_register(self.REG_OTG_CONFIG)
-        reg_value &= ~(1 << 5) # clear enable bit
-        self._write_register(self.REG_OTG_CONFIG, reg_value)
+        '''Disable ship mode.
+
+        Reset by: power-on-reset
+        Reset to: disabled
+        '''
+        # write 0x00 to bits 1-2 in charge control register 2
+        self._write_register(self.REG_CHARGE_CTRL_2, 0x00, register_length=8, value_length=2, start=1)
         logging.info('Exiting ship mode')
         
     def ship_mode_enabled(self):
-        '''Check if ship mode is enabled.
+        '''Whether ship mode is enabled.
         
         Returns:
             bool: True if ship mode is enabled, False otherwise
         '''
-        reg_value = self._read_register(self.REG_OTG_CONFIG, reg_bits=8)
-        return bool(reg_value & (1 << 5)) # check if enable bit is set
+        # read bits 1-2 of charge control register 2
+        reg_value = self._read_register(self.REG_CHARGE_CTRL_2, register_length=8, start=1, end=2))
+        if reg_value == 0x02:
+            return True
+        else:
+            return False
         
     def enable_shutdown_mode(self):
         '''Enter shutdown mode.'''
-        reg_value = self._read_register(self.REG_PROTECTION_CTRL)
-        reg_value |= (1 << 7) # set enable bit
-        self._write_register(self.REG_PROTECTION_CTRL, reg_value)
         logging.info('Entering shutdown mode')
+        # write 0x01 to bits 1-2 in charge control register 2
+        self._write_register(self.REG_CHARGE_CTRL_2, 0x02, register_length=8, value_length=2, start=1)
         
     
+    #TODO pick up here
     ### Fault Status ###
     def update_fault_status(self):
         '''Update local fault status.
