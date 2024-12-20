@@ -146,15 +146,21 @@ class BQ25798:
     ADC_MODES = [ADC_MODE_ONE_SHOT, ADC_MODE_CONTINUOUS]
 
     # faults
-    FAULT_INPUT_OVER_VOLTAGE  = 'input over-voltage fault'
-    FAULT_INPUT_UNDER_VOLTAGE = 'input under-voltage fault'
-    FAULT_INPUT_OVER_CURRENT  = 'input over-current fault'
-    FAULT_BAT_OVER_VOLTAGE    = 'battery over-voltage fault'
-    FAULT_BAT_OVER_CURRENT    = 'battery over-current fault'
-    FAULT_BAT_TEMP            = 'battery temperature fault'
-    FAULT_DIE_TEMP            = 'die temperature fault'
-    FAULT_CHARGING            = 'charging fault'
-    FAULTS = [FAULT_INPUT_OVER_VOLTAGE, FAULT_INPUT_UNDER_VOLTAGE, FAULT_INPUT_OVER_CURRENT, FAULT_BAT_OVER_VOLTAGE, FAULT_BAT_OVER_CURRENT, FAULT_BAT_TEMP, FAULT_DIE_TEMP, FAULT_CHARGING]
+    FAULT_IBAT_REGULATION        = 'IBAT regulation fault'
+    FAULT_VBUS_OVER_VOLTAGE      = 'VBUS over-voltage fault'
+    FAULT_VBAT_OVER_VOLTAGE      = 'VBAT over-voltage fault'
+    FAULT_IBUS_OVER_CURRENT      = 'IBUS over-current fault'
+    FAULT_IBAT_OVER_CURRENT      = 'IBAT over-current fault'
+    FAULT_CONVERTER_OVER_CURRENT = 'Converter over-current fault'
+    FAULT_VAC2_OVER_VOLTAGE      = 'VAC2 over-voltage fault'
+    FAULT_VAC1_OVER_VOLTAGE      = 'VAC1 over-voltage fault'
+    FAULT_VSYS_SHORT             = 'VSYS short circuit fault'
+    FAULT_VSYS_OVER_VOLTAGE      = 'VSYS over-voltage fault'
+    FAULT_OTG_OVER_VOLTAGE       = 'OTG over-voltage fault'
+    FAULT_OTG_UNDER_VOLTAGE      = 'OTG under-voltage fault'
+    FAULT_TDIE_SHUTDOWN          = 'TDIE shutdown fault'
+    FAULTS = [FAULT_IBAT_REGULATION, FAULT_VBUS_OVER_VOLTAGE, FAULT_VBAT_OVER_VOLTAGE, FAULT_IBUS_OVER_CURRENT, FAULT_IBAT_OVER_CURRENT, FAULT_CONVERTER_OVER_CURRENT, FAULT_VAC2_OVER_VOLTAGE, FAULT_VAC1_OVER_VOLTAGE, FAULT_VSYS_SHORT, FAULT_VSYS_OVER_VOLTAGE, FAULT_OTG_OVER_VOLTAGE, FAULT_OTG_UNDER_VOLTAGE, FAULT_TDIE_SHUTDOWN]
+
 
     def __init__(self, charge_voltage, charge_current, bat_series_cells, bat_chemistry, bat_capacity_ah, i2c_bus=1, i2c_address=0x6B):
         '''Initialize BQ25798 instance.
@@ -208,7 +214,7 @@ class BQ25798:
         
         self.adc_mode = self.ADC_MODE_ONE_SHOT
         '''ADC operating mode (see BQ25798.ADC_MODE_* constants)'''
-        self.state = self.BAT_STATE_DISCHARGING
+        self.state = self.BAT_STATE_NOT_CHARGING
         '''Battery state (see BQ25798.BAT_STATE_* constants)'''
         
         self._state_lock = threading.Lock()
@@ -247,14 +253,19 @@ class BQ25798:
         '''USB data minus reading in volts'''
         
         # initalize fault status variables
-        self.input_over_voltage_fault = False
-        self.input_under_voltage_fault = False
-        self.input_over_current_fault = False
-        self.bat_over_voltage_fault = False
-        self.bat_over_current_fault = False
-        self.bat_temp_fault = False
-        self.die_temp_fault = False
-        self.charging_fault = False
+        self.fault_ibat_regulation = False
+        self.fault_vbus_over_voltage = False
+        self.fault_vbat_over_voltage = False
+        self.fault_ibus_over_current = False
+        self.fault_ibat_over_current = False
+        self.fault_converter_over_current = False
+        self.fault_vac2_over_voltage = False
+        self.fault_vac1_over_voltage = False
+        self.fault_vsys_short = False
+        self.fault_vsys_over_voltage = False
+        self.fault_otg_over_voltage = False
+        self.fault_otg_under_voltage = False
+        self.fault_tdie_shutdown = False
         
         # ensure ship mode is disabled
         if self.ship_mode_enabled():
@@ -298,13 +309,7 @@ class BQ25798:
             # update state
             previous_state = self.state
             with self._state_lock:
-                if self.battery_charging():
-                    if self.battery_percentage() < 100:
-                        self.state = self.BAT_STATE_CHARGING
-                    else:
-                        self.state = self.BAT_STATE_CHARGED
-                else:
-                    self.state = self.BAT_STATE_DISCHARGING
+                self.state = self.battery_charge_stage()
             
             if self.state != previous_state:
                 logging.info(f'State change: {self.state}')
@@ -314,28 +319,38 @@ class BQ25798:
             
             # update fault status
             previous_faults = {
-                self.FAULT_INPUT_OVER_VOLTAGE  : self.input_over_voltage_fault,
-                self.FAULT_INPUT_UNDER_VOLTAGE : self.input_under_voltage_fault,
-                self.FAULT_INPUT_OVER_CURRENT  : self.input_over_current_fault,
-                self.FAULT_BAT_OVER_VOLTAGE    : self.bat_over_voltage_fault,
-                self.FAULT_BAT_OVER_CURRENT    : self.bat_over_current_fault,
-                self.FAULT_BAT_TEMP            : self.bat_temp_fault,
-                self.FAULT_DIE_TEMP            : self.die_temp_fault,
-                self.FAULT_CHARGING            : self.charging_fault,
+                self.FAULT_IBAT_REGULATION: self.fault_ibat_regulation,
+                self.FAULT_VBUS_OVER_VOLTAGE: self.fault_vbus_over_voltage,
+                self.FAULT_VBAT_OVER_VOLTAGE: self.fault_vbat_over_voltage,
+                self.FAULT_IBUS_OVER_CURRENT: self.fault_ibus_over_current,
+                self.FAULT_IBAT_OVER_CURRENT: self.fault_ibat_over_current,
+                self.FAULT_CONVERTER_OVER_CURRENT: self.fault_converter_over_current,
+                self.FAULT_VAC2_OVER_VOLTAGE: self.fault_vac2_over_voltage,
+                self.FAULT_VAC1_OVER_VOLTAGE: self.fault_vac1_over_voltage,
+                self.FAULT_VSYS_SHORT: self.fault_vsys_short,
+                self.FAULT_VSYS_OVER_VOLTAGE: self.fault_vsys_over_voltage,
+                self.FAULT_OTG_OVER_VOLTAGE: self.fault_otg_over_voltage,
+                self.FAULT_OTG_UNDER_VOLTAGE: self.fault_otg_under_voltage,
+                self.FAULT_TDIE_SHUTDOWN: self.fault_tdie_shutdown
             }
-            
+
             with self._fault_lock:
                 self.update_fault_status()
             
             current_faults = {
-                self.FAULT_INPUT_OVER_VOLTAGE  : self.input_over_voltage_fault,
-                self.FAULT_INPUT_UNDER_VOLTAGE : self.input_under_voltage_fault,
-                self.FAULT_INPUT_OVER_CURRENT  : self.input_over_current_fault,
-                self.FAULT_BAT_OVER_VOLTAGE    : self.bat_over_voltage_fault,
-                self.FAULT_BAT_OVER_CURRENT    : self.bat_over_current_fault,
-                self.FAULT_BAT_TEMP            : self.bat_temp_fault,
-                self.FAULT_DIE_TEMP            : self.die_temp_fault,
-                self.FAULT_CHARGING            : self.charging_fault,
+                self.FAULT_IBAT_REGULATION: self.fault_ibat_regulation,
+                self.FAULT_VBUS_OVER_VOLTAGE: self.fault_vbus_over_voltage,
+                self.FAULT_VBAT_OVER_VOLTAGE: self.fault_vbat_over_voltage,
+                self.FAULT_IBUS_OVER_CURRENT: self.fault_ibus_over_current,
+                self.FAULT_IBAT_OVER_CURRENT: self.fault_ibat_over_current,
+                self.FAULT_CONVERTER_OVER_CURRENT: self.fault_converter_over_current,
+                self.FAULT_VAC2_OVER_VOLTAGE: self.fault_vac2_over_voltage,
+                self.FAULT_VAC1_OVER_VOLTAGE: self.fault_vac1_over_voltage,
+                self.FAULT_VSYS_SHORT: self.fault_vsys_short,
+                self.FAULT_VSYS_OVER_VOLTAGE: self.fault_vsys_over_voltage,
+                self.FAULT_OTG_OVER_VOLTAGE: self.fault_otg_over_voltage,
+                self.FAULT_OTG_UNDER_VOLTAGE: self.fault_otg_under_voltage,
+                self.FAULT_TDIE_SHUTDOWN: self.fault_tdie_shutdown
             }
             
             for fault, previous_status in previous_faults.items():
@@ -348,7 +363,6 @@ class BQ25798:
         
     def _read_register(self, register, register_length, start=None, end=None):
         '''Read register value.
-
         
         *start* and *end* bit positions are zero-based. For example, when reading the last bit in an 8-bit register, *start* = 7.
 
@@ -378,14 +392,7 @@ class BQ25798:
         elif register_length == 16:
             value = self.bus.read_word_data(self.address, register) # read 16 bits
 
-        if start > 0:
-            value = (value >> start)
-
-        if end < (register_length - 1):
-            value_length = end - start + 1
-            value = value & self._bit_mask(value_length)
-
-        return value
+        return self._get_bit_value(value, register_length, start, end)
         
     def _write_register(self, register, value, register_length, value_length=None, start=0):
         '''Write register value
@@ -430,6 +437,32 @@ class BQ25798:
             int: bit mask of specified length
         '''
         return (1 << length) - 1
+    
+    def _get_bit_value(self, register_value, register_length, start, end):
+        '''Get subset of bits.
+        
+        *start* and *end* bit positions are zero-based. For example, when reading the last bit in an 8-bit register, *start* = 7.
+
+        Args:
+            register_value (int): Complete value of the register
+            register_length (int): Register size (number of bits), should be 8 or 16
+            start (int): First bit for desired value
+            end (int): Last bit position for desired value
+        
+        Returns:
+            int: Specified subset of register bits
+        
+        Raises:
+            ValueError: Register length must be 8 or 16
+        '''
+        if start > 0:
+            value = (register_value >> start)
+
+        if end < (register_length - 1):
+            value_length = end - start + 1
+            value = value & self._bit_mask(value_length)
+
+        return value
 
     def _set_bit_value(self, register_value, new_value, register_length, new_value_length, start=0):
         '''Set subset of bits.
@@ -442,6 +475,9 @@ class BQ25798:
             register_length (int): Register size (number of bits), should be 8 or 16
             new_value_length (int): Number of bits in *new_value*
             start (int): First bit position to write *new_value*, defaults to 0
+
+        Returns:
+            int: Register value with specified bits replaced
 
         Raises:
             ValueError: Value too large for register at specified position
@@ -720,13 +756,13 @@ class BQ25798:
             str: One of BQ25798.BAT_STATE_*
         '''
         charge_stage_map = {
-            0x0: BAT_STATE_NOT_CHARGING,
-            0x1: BAT_STATE_TRICKLE_CHARGE,
-            0x2: BAT_STATE_PRECHARGE,
-            0x3: BAT_STATE_FAST_CHARGE,
-            0x4: BAT_STATE_TAPER_CHARGE,
-            0x6: BAT_STATE_TOP_OFF_TIMER,
-            0x7: BAT_STATE_CHARGED
+            0x0: self.BAT_STATE_NOT_CHARGING,
+            0x1: self.BAT_STATE_TRICKLE_CHARGE,
+            0x2: self.BAT_STATE_PRECHARGE,
+            0x3: self.BAT_STATE_FAST_CHARGE,
+            0x4: self.BAT_STATE_TAPER_CHARGE,
+            0x6: self.BAT_STATE_TOP_OFF_TIMER,
+            0x7: self.BAT_STATE_CHARGED
         }
         
         # read bits 5-7 of charge status register 1
@@ -902,49 +938,54 @@ class BQ25798:
         self._write_register(self.REG_CHARGE_CTRL_2, 0x02, register_length=8, value_length=2, start=1)
         
     
-    #TODO pick up here
     ### Fault Status ###
     def update_fault_status(self):
-        '''Update local fault status.
+        '''Update local fault status variables.'''
+        fault_reg_0 = self._read_register(self.REG_FAULT_STATUS_0, register_length=8)
+        fault_reg_1 = self._read_register(self.REG_FAULT_STATUS_1, register_length=8)
         
-        Updates the following class variables:
-            - input_over_voltage_fault
-            - input_under_voltage_fault
-            - input_over_current_fault
-            - bat_over_voltage_fault
-            - bat_over_current_fault
-            - bat_temp_fault
-            - die_temp_fault
-            - charging_fault
-        '''
-        fault_reg = self._read_register(self.REG_FAULT_STATUS, reg_bits=8)
-        
-        self.input_over_voltage_fault = bool(fault_reg & (1 << 7))
-        self.input_under_voltage_fault = bool(fault_reg & (1 << 6))
-        self.input_over_current_fault = bool(fault_reg & (1 << 5))
-        self.bat_over_voltage_fault = bool(fault_reg & (1 << 4))
-        self.bat_over_current_fault = bool(fault_reg & (1 << 3))
-        self.bat_temp_fault = bool(fault_reg & (1 << 2))
-        self.die_temp_fault = bool(fault_reg & (1 << 1))
-        self.charging_fault = bool(fault_reg & (1 << 0))
+        self.fault_ibat_regulation = bool(self._get_bit_value(fault_reg_0, register_length=8, start=7, end=7))
+        self.fault_vbus_over_voltage = bool(self._get_bit_value(fault_reg_0, register_length=8, start=6, end=6))
+        self.fault_vbat_over_voltage = bool(self._get_bit_value(fault_reg_0, register_length=8, start=5, end=5))
+        self.fault_ibus_over_current = bool(self._get_bit_value(fault_reg_0, register_length=8, start=4, end=4))
+        self.fault_ibat_over_current = bool(self._get_bit_value(fault_reg_0, register_length=8, start=3, end=3))
+        self.fault_converter_over_current = bool(self._get_bit_value(fault_reg_0, register_length=8, start=2, end=2))
+        self.fault_vac2_over_voltage = bool(self._get_bit_value(fault_reg_0, register_length=8, start=1, end=1))
+        self.fault_vac1_over_voltage = bool(self._get_bit_value(fault_reg_0, register_length=8, start=0, end=0))
+        self.fault_vsys_short = bool(self._get_bit_value(fault_reg_1, register_length=8, start=7, end=7))
+        self.fault_vsys_over_voltage = bool(self._get_bit_value(fault_reg_1, register_length=8, start=6, end=6))
+        self.fault_otg_over_voltage = bool(self._get_bit_value(fault_reg_1, register_length=8, start=5, end=5))
+        self.fault_otg_under_voltage = bool(self._get_bit_value(fault_reg_1, register_length=8, start=4, end=4))
+        self.fault_tdie_shutdown = bool(self._get_bit_value(fault_reg_1, register_length=8, start=2, end=2))
         
     
     ### Adapter and Input Port Management ###
-    def adapter_connected(self, port):
-        '''Check whether an adapter is connected to the specified port.
+    def adapter_connected(self, port=None):
+        '''Whether an adapter is connected.
+
+        If *port* is *None*, returns *True* if an adapter is connected to either port, or *False* if an adapter is not connect to either port.
         
         Args:
-            port (int): Port number (1 or 2)
+            port (int, None): Port number (1 or 2), defaults to None
         
         Returns:
-            bool: True if an adapter is connected to the specified port, False otherwise
+            bool: True if an adapter is connected, False otherwise
         '''
-        if port not in (1, 2):
+        if port is not None and port not in (1, 2):
             raise ValueError('Invalid port number, must be 1 or 2')
-    
-        input_source_ctrl = self._read_register(self.REG_INPUT_SOURCE_CTRL, reg_bits=8)
-        return bool(input_source_ctrl & (1 << 6))
 
+        if port is None:
+            reg_value = self._read_register(self.REG_CHARGE_CTRL_0, register_length=8)
+            # read bit 1 from charge control register 0
+            vac1 = bool(self._get_bit_value(reg_value, register_length=8, start=1, end=1))
+            # read bit 2 from charge control register 0
+            vac1 = bool(self._get_bit_value(reg_value, register_length=8, start=2, end=2))
+            return any(vac1, vac2)
+
+        # read bit 1 or 2 (depending on specified port) from charge control register 0
+        return bool(self._read_register(self.REG_CHARGE_CTRL_0, register_length=8, start=port, end=port))
+
+    #TODO pick up here
     def get_input_current_limit(self):
         '''Get input current limit.
         
